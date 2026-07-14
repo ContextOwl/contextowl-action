@@ -1,0 +1,25 @@
+# Example ContextOwl config. Place this at the root of your repository as
+# `.contextowl.yml`. Every section is optional; configure the surfaces you use.
+
+# Target workspace id or slug. Omit if your token is workspace-bound.
+workspace: prod
+
+# Docs: a tree of Markdown files. One file becomes one article. The parent
+# directory name becomes the article's section unless front-matter overrides it.
+docs:
+  dir: docs
+
+# Changelog: a "Keep a Changelog" style file. Each `## [version] - date`
+# heading becomes one changelog entry.
+changelog:
+  file: CHANGELOG.md
+
+# OpenAPI: a 3.x spec (JSON or YAML). ContextOwl regenerates API reference
+# pages from it on every run.
+openapi:
+  spec: openapi.yaml
+
+# Remove content that is no longer in the repo. Off by default. When on, docs
+# absent from the repo are DEPRECATED and changelog entries are DELETED.
+# Can also be enabled with the action's `prune: true` input.
+prune: false

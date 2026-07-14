@@ -1,0 +1,29 @@
+# Example workflow. Copy to .github/workflows/contextowl.yml in your repo.
+name: Publish to ContextOwl
+
+on:
+  push:
+    branches: [main]
+    # Only run when documentation sources change.
+    paths:
+      - "docs/**"
+      - "CHANGELOG.md"
+      - "openapi.yaml"
+      - ".contextowl.yml"
+
+# Prevent overlapping publishes from racing each other.
+concurrency:
+  group: contextowl-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ContextOwl/contextowl-action@v1
+        with:
+          token: ${{ secrets.CONTEXTOWL_TOKEN }}
+          # server-url: https://docs.your-company.com   # self-hosted only
+          # prune: true                                  # mirror: remove stale content
+          # dry-run: true                                # preview without writing

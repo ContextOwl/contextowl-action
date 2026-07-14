@@ -1,0 +1,29 @@
+name: Release
+
+# On a semver tag (v1.2.3), move the sliding major tag (v1) to the same commit
+# so consumers can pin `@v1` and receive compatible updates.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  major-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Update major tag
+        run: |
+          set -euo pipefail
+          full="${GITHUB_REF_NAME}"
+          major="${full%%.*}"   # v1.2.3 -> v1
+          echo "Pointing $major at $full"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "$major"
+          git push origin "$major" --force

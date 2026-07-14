@@ -1,0 +1,45 @@
+name: "ContextOwl Publish"
+description: "Publish your docs, changelog, and OpenAPI reference to ContextOwl from CI."
+author: "ContextOwl"
+branding:
+  icon: "book-open"
+  color: "purple"
+
+inputs:
+  token:
+    description: "ContextOwl personal access token (cowl_pat_...). Store it in an encrypted secret."
+    required: true
+  server-url:
+    description: "Base URL of your ContextOwl instance. The action appends /mcp."
+    required: false
+    default: "https://app.contextowl.co"
+  config:
+    description: "Path to the .contextowl.yml config file, relative to the repo root."
+    required: false
+    default: ".contextowl.yml"
+  workspace:
+    description: "Target workspace id or slug. Overrides the config file. Omit if the token is workspace-bound."
+    required: false
+    default: ""
+  prune:
+    description: "Remove content no longer present in the repo (docs are deprecated, changelog entries deleted). Off by default."
+    required: false
+    default: "false"
+  dry-run:
+    description: "Compute and print the plan without making any changes."
+    required: false
+    default: "false"
+
+outputs:
+  created:
+    description: "Number of items created."
+  updated:
+    description: "Number of items updated."
+  deleted:
+    description: "Number of items deleted or deprecated by prune."
+  skipped:
+    description: "Number of unchanged items skipped."
+
+runs:
+  using: "node24"
+  main: "dist/index.mjs"
