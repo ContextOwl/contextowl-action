@@ -39,7 +39,7 @@ describe("resolveConfig", () => {
 
   const inputs = (configPath: string, over: Record<string, unknown> = {}) => ({
     token: "cowl_pat_x",
-    serverUrl: "https://app.contextowl.co",
+    serverUrl: "https://contextowl.co",
     configPath,
     workspace: "",
     prune: false,
@@ -61,6 +61,6 @@ describe("resolveConfig", () => {
     const cfg = resolveConfig(inputs(p, { workspace: "staging" }));
     expect(cfg.workspace).toBe("staging");
     expect(cfg.prune).toBe(true);
-    expect(cfg.mcpUrl).toBe("https://app.contextowl.co/mcp");
+    expect(cfg.mcpUrl).toBe("https://contextowl.co/mcp");
   });
 });

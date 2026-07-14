@@ -57,7 +57,7 @@ That's it. Push to `main` and your docs publish.
 | Input        | Required | Default                       | Description                                                        |
 | ------------ | -------- | ----------------------------- | ------------------------------------------------------------------ |
 | `token`      | yes      | —                             | ContextOwl PAT (`cowl_pat_...`). Always pass via a secret.         |
-| `server-url` | no       | `https://app.contextowl.co`   | Base URL of your instance. The action appends `/mcp`.              |
+| `server-url` | no       | `https://contextowl.co`       | Base URL of your instance. The action appends `/mcp`.              |
 | `config`     | no       | `.contextowl.yml`             | Path to the config file, relative to the repo root.                |
 | `workspace`  | no       | —                             | Target workspace. Overrides the config; omit for workspace tokens. |
 | `prune`      | no       | `false`                       | Remove content no longer in the repo. See [Prune](#prune).         |

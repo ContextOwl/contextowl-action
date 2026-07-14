@@ -12,7 +12,7 @@ inputs:
   server-url:
     description: "Base URL of your ContextOwl instance. The action appends /mcp."
     required: false
-    default: "https://app.contextowl.co"
+    default: "https://contextowl.co"
   config:
     description: "Path to the .contextowl.yml config file, relative to the repo root."
     required: false
