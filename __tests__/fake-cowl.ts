@@ -84,9 +84,10 @@ export class FakeCowl implements Cowl {
   }
 
   async createArticle(_ws: string | undefined, args: CreateArticleArgs): Promise<string> {
-    let slug = slugify(args.title);
+    const base = slugify(args.slug || args.title);
+    let slug = base;
     let n = 2;
-    while (this.articles.has(slug)) slug = `${slugify(args.title)}-${n++}`;
+    while (this.articles.has(slug)) slug = `${base}-${n++}`;
     this.articles.set(slug, {
       slug,
       title: args.title,

@@ -54,7 +54,12 @@ describe("RestClient", () => {
     ]);
     await expect(client.getArticleMarkdown(undefined, "intro")).resolves.toBe("# Intro");
     await expect(
-      client.createArticle(undefined, { title: "Intro", section: "Guides", markdown: "# Intro" }),
+      client.createArticle(undefined, {
+        title: "Intro",
+        slug: "introduction",
+        section: "Guides",
+        markdown: "# Intro",
+      }),
     ).resolves.toBe("intro");
     await client.updateArticle(undefined, { slug: "intro", markdown: "Updated", status: "STABLE" });
     await expect(client.createSection(undefined, "Guides")).resolves.toBe("guides");
@@ -91,7 +96,7 @@ describe("RestClient", () => {
       {
         url: "https://contextowl.test/api/v1/workspaces/-/articles",
         method: "POST",
-        body: '{"title":"Intro","section":"Guides","markdown":"# Intro"}',
+        body: '{"title":"Intro","slug":"introduction","section":"Guides","markdown":"# Intro"}',
       },
       {
         url: "https://contextowl.test/api/v1/workspaces/-/articles/intro",

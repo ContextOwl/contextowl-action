@@ -131,6 +131,7 @@ export async function syncDocs(
     try {
       const slug = await cowl.createArticle(opts.workspace, {
         title: d.title,
+        slug: d.slug,
         section: d.section,
         markdown: d.markdown,
       });
