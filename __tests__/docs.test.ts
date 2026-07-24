@@ -38,6 +38,16 @@ describe("syncDocs", () => {
     expect(a.markdown).toBe("hello");
   });
 
+  it("uses an explicit slug when creating an article", async () => {
+    const cowl = new FakeCowl();
+    const dir = writeTree({
+      "guides/cli.md": "---\ntitle: cowl - the ContextOwl CLI\nslug: cli\n---\nhello",
+    });
+    await syncDocs(cowl, nullLogger, opts(dir));
+
+    expect(cowl.articles.get("cli")?.title).toBe("cowl - the ContextOwl CLI");
+  });
+
   it("skips an unchanged article", async () => {
     const cowl = new FakeCowl();
     cowl.seedArticle({ title: "Intro", section: "Guides", status: "STABLE", markdown: "hello" });

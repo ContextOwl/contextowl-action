@@ -94,6 +94,7 @@ export class RestClient implements Cowl {
   async createArticle(workspace: string | undefined, args: CreateArticleArgs): Promise<string> {
     const data = await this.request<unknown>("POST", `${this.workspacePath(workspace)}/articles`, {
       title: args.title,
+      slug: args.slug,
       section: args.section,
       markdown: args.markdown,
     });

@@ -36566,6 +36566,7 @@ var RestClient = class {
   async createArticle(workspace, args) {
     const data = await this.request("POST", `${this.workspacePath(workspace)}/articles`, {
       title: args.title,
+      slug: args.slug,
       section: args.section,
       markdown: args.markdown
     });
@@ -36852,6 +36853,7 @@ async function syncDocs(cowl, logger2, opts) {
     try {
       const slug = await cowl.createArticle(opts.workspace, {
         title: d.title,
+        slug: d.slug,
         section: d.section,
         markdown: d.markdown
       });

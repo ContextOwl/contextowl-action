@@ -30,6 +30,7 @@ export interface OpenapiStats {
 
 export interface CreateArticleArgs {
   title: string;
+  slug?: string;
   section?: string;
   markdown: string;
 }
