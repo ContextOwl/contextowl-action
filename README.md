@@ -5,12 +5,12 @@ Publish your **docs**, **changelog**, and **OpenAPI reference** to
 give it a token, and every push keeps your published documentation in sync with
 your repository.
 
-- **Docs** — a tree of Markdown files becomes articles, organized into sidebar sections.
-- **Changelog** — a [Keep a Changelog](https://keepachangelog.com) file becomes changelog entries.
-- **OpenAPI** — a 3.x spec regenerates your API reference pages.
+- **Docs**: a tree of Markdown files becomes articles, organized into sidebar sections.
+- **Changelog**: a [Keep a Changelog](https://keepachangelog.com) file becomes changelog entries.
+- **OpenAPI**: a 3.x spec regenerates your API reference pages.
 
-It talks to ContextOwl over the authenticated MCP endpoint, so it works against
-the hosted service or any self-hosted instance.
+It uses ContextOwl's authenticated REST API, so it works against the hosted
+service or any self-hosted instance.
 
 ## Quick start
 
@@ -50,22 +50,23 @@ the hosted service or any self-hosted instance.
              token: ${{ secrets.CONTEXTOWL_TOKEN }}
    ```
 
-That's it. Push to `main` and your docs publish.
+That's it. Push to `main` and your docs publish. See the
+[GitHub Action guide](https://developer.contextowl.co/docs/platform/github-action) for the full setup.
 
 ## Inputs
 
 | Input        | Required | Default                       | Description                                                        |
 | ------------ | -------- | ----------------------------- | ------------------------------------------------------------------ |
-| `token`      | yes      | —                             | ContextOwl PAT (`cowl_pat_...`). Always pass via a secret.         |
-| `server-url` | no       | `https://contextowl.co`       | Base URL of your instance. The action appends `/mcp`.              |
+| `token`      | yes      | -                             | ContextOwl PAT (`cowl_pat_...`). Always pass via a secret.         |
+| `server-url` | no       | `https://contextowl.co`       | Base URL of your instance. The action appends `/api/v1`.           |
 | `config`     | no       | `.contextowl.yml`             | Path to the config file, relative to the repo root.                |
-| `workspace`  | no       | —                             | Target workspace. Overrides the config; omit for workspace tokens. |
+| `workspace`  | no       | -                             | Target workspace. Overrides the config; omit for workspace tokens. |
 | `prune`      | no       | `false`                       | Remove content no longer in the repo. See [Prune](#prune).         |
 | `dry-run`    | no       | `false`                       | Compute and print the plan without making any changes.             |
 
 ### Outputs
 
-`created`, `updated`, `deleted`, `skipped` — totals across all surfaces. A
+`created`, `updated`, `deleted`, `skipped`: totals across all surfaces. A
 summary table is also written to the workflow run.
 
 ## Configuration reference
@@ -159,7 +160,7 @@ content that is **no longer present in the repo** is removed:
 | --------- | -------------------------------------- | -------------------- | -------------------- |
 | Docs      | `article.read`, `article.create`, `article.update`, `section.create`, `article.place` | `article.publish` | `article.publish` |
 | Changelog | `changelog.read`, `changelog.create`, `changelog.update` | `changelog.publish` | `changelog.delete` |
-| OpenAPI   | `openapi.read`, `openapi.attach`, `openapi.sync` | —              | —                    |
+| OpenAPI   | `openapi.read`, `openapi.attach`, `openapi.sync` | -              | -                    |
 
 Missing an optional permission degrades gracefully (a warning, not a failure).
 
@@ -172,7 +173,7 @@ Missing an optional permission degrades gracefully (a warning, not a failure).
     dry-run: true
 ```
 
-Prints exactly what would be created, updated, skipped, or removed — no changes made.
+Prints exactly what would be created, updated, skipped, or removed. No changes are made.
 
 ## Self-hosted
 

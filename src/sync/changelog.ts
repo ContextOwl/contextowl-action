@@ -6,7 +6,7 @@
 // Prune (opt-in) hard-deletes entries whose version is absent from the file.
 import { existsSync, readFileSync } from "node:fs";
 import type { Cowl, RemoteChangelog } from "../types.js";
-import { CowlToolError } from "../types.js";
+import { CowlAPIError } from "../types.js";
 import type { Logger } from "../logger.js";
 import { type SurfaceResult, emptyResult } from "./plan.js";
 import { type ParsedChangelogEntry, parseChangelog } from "../util/changelog.js";
@@ -73,7 +73,7 @@ export async function syncChangelog(
         status: publishDenied ? "draft" : "published",
       });
     } catch (err) {
-      if (err instanceof CowlToolError && err.isPermissionDenied("changelog.publish")) {
+      if (err instanceof CowlAPIError && err.isPermissionDenied("changelog.publish")) {
         publishDenied = true;
         warn("token lacks changelog.publish; creating entries as drafts");
         await cowl.createChangelog(opts.workspace, base);
@@ -126,7 +126,7 @@ export async function syncChangelog(
       await cowl.updateChangelog(opts.workspace, patch);
     } catch (err) {
       if (
-        err instanceof CowlToolError &&
+        err instanceof CowlAPIError &&
         err.isPermissionDenied("changelog.publish") &&
         patch.status
       ) {
@@ -187,7 +187,7 @@ export async function syncChangelog(
         result.lines.push(`deleted "${e.title}"`);
         result.deleted++;
       } catch (err) {
-        if (err instanceof CowlToolError && err.isPermissionDenied("changelog.delete")) {
+        if (err instanceof CowlAPIError && err.isPermissionDenied("changelog.delete")) {
           deleteDenied = true;
           warn("token lacks changelog.delete; skipping prune");
         } else {

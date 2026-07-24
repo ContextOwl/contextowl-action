@@ -1,4 +1,4 @@
-// Small helpers for reading loosely-typed JSON returned by MCP tools, tolerant
+// Small helpers for reading loosely-typed JSON returned by the REST API, tolerant
 // of key casing (Go marshals some structs with capitalized field names).
 export type Rec = Record<string, unknown>;
 

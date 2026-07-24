@@ -1,5 +1,4 @@
-// In-memory Cowl gateway for tests. Mirrors the ContextOwl MCP tool semantics,
-// including permission denials, without any network or MCP transport.
+// In-memory Cowl gateway for tests. Mirrors REST API semantics without network access.
 import {
   type Cowl,
   type CreateArticleArgs,
@@ -9,7 +8,7 @@ import {
   type RemoteChangelog,
   type UpdateArticleArgs,
   type UpdateChangelogArgs,
-  CowlToolError,
+  CowlAPIError,
 } from "../src/types.js";
 
 interface StoredArticle extends RemoteArticle {
@@ -80,7 +79,7 @@ export class FakeCowl implements Cowl {
 
   async getArticleMarkdown(_ws: string | undefined, slug: string): Promise<string> {
     const a = this.articles.get(slug);
-    if (!a) throw new CowlToolError("get_article", "no such article");
+    if (!a) throw new CowlAPIError("get article", "no such article", 404, "not_found");
     return a.markdown;
   }
 
@@ -102,17 +101,21 @@ export class FakeCowl implements Cowl {
 
   async updateArticle(_ws: string | undefined, args: UpdateArticleArgs): Promise<void> {
     const a = this.articles.get(args.slug);
-    if (!a) throw new CowlToolError("update_article", "no such article");
+    if (!a) throw new CowlAPIError("update article", "no such article", 404, "not_found");
     if (a.openapi) {
-      throw new CowlToolError(
-        "update_article",
+      throw new CowlAPIError(
+        "update article",
         "detach this OpenAPI-generated page before editing it",
+        409,
+        "openapi_generated",
       );
     }
     if (args.status !== undefined && !this.perms.articlePublish) {
-      throw new CowlToolError(
-        "update_article",
-        "permission denied: article.publish (required to change status)",
+      throw new CowlAPIError(
+        "update article",
+        "article.publish is required to change status",
+        403,
+        "permission_denied",
       );
     }
     if (args.title !== undefined) a.title = args.title;
@@ -138,9 +141,11 @@ export class FakeCowl implements Cowl {
 
   async createChangelog(_ws: string | undefined, args: CreateChangelogArgs): Promise<number> {
     if (args.status === "published" && !this.perms.changelogPublish) {
-      throw new CowlToolError(
-        "create_changelog",
-        "permission denied: changelog.publish (required to publish)",
+      throw new CowlAPIError(
+        "create changelog",
+        "changelog.publish is required to publish",
+        403,
+        "permission_denied",
       );
     }
     return this.seedChangelog({
@@ -154,11 +159,13 @@ export class FakeCowl implements Cowl {
 
   async updateChangelog(_ws: string | undefined, args: UpdateChangelogArgs): Promise<void> {
     const e = this.changelog.find((c) => c.id === args.id);
-    if (!e) throw new CowlToolError("update_changelog", "no such changelog entry");
+    if (!e) throw new CowlAPIError("update changelog", "no such changelog entry", 404, "not_found");
     if (args.status !== undefined && !this.perms.changelogPublish) {
-      throw new CowlToolError(
-        "update_changelog",
-        "permission denied: changelog.publish (required to change status)",
+      throw new CowlAPIError(
+        "update changelog",
+        "changelog.publish is required to change status",
+        403,
+        "permission_denied",
       );
     }
     if (args.markdown !== undefined) e.markdown = args.markdown;
@@ -169,14 +176,24 @@ export class FakeCowl implements Cowl {
 
   async deleteChangelog(_ws: string | undefined, id: number): Promise<void> {
     if (!this.perms.changelogDelete) {
-      throw new CowlToolError("delete_changelog", "permission denied: changelog.delete");
+      throw new CowlAPIError(
+        "delete changelog",
+        "changelog.delete is required",
+        403,
+        "permission_denied",
+      );
     }
     this.changelog = this.changelog.filter((c) => c.id !== id);
   }
 
   async attachOpenapi(_ws: string | undefined, spec: string): Promise<OpenapiStats | null> {
     if (!this.perms.openapiAttach) {
-      throw new CowlToolError("attach_openapi_spec", "permission denied: openapi.attach");
+      throw new CowlAPIError(
+        "attach OpenAPI",
+        "openapi.attach is required",
+        403,
+        "permission_denied",
+      );
     }
     this.openapiSpec = spec;
     return this.openapiStats;

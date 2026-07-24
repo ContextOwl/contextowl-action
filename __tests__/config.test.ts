@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mcpUrlFrom, parseConfig, resolveConfig } from "../src/config.js";
+import { apiUrlFrom, parseConfig, resolveConfig } from "../src/config.js";
 
 describe("parseConfig", () => {
   it("accepts a valid config", () => {
@@ -21,11 +21,11 @@ describe("parseConfig", () => {
   });
 });
 
-describe("mcpUrlFrom", () => {
-  it("appends /mcp and trims trailing slashes", () => {
-    expect(mcpUrlFrom("https://x.co")).toBe("https://x.co/mcp");
-    expect(mcpUrlFrom("https://x.co/")).toBe("https://x.co/mcp");
-    expect(mcpUrlFrom("https://x.co///")).toBe("https://x.co/mcp");
+describe("apiUrlFrom", () => {
+  it("appends /api/v1 and trims trailing slashes", () => {
+    expect(apiUrlFrom("https://x.co")).toBe("https://x.co/api/v1");
+    expect(apiUrlFrom("https://x.co/")).toBe("https://x.co/api/v1");
+    expect(apiUrlFrom("https://x.co///")).toBe("https://x.co/api/v1");
   });
 });
 
@@ -61,6 +61,6 @@ describe("resolveConfig", () => {
     const cfg = resolveConfig(inputs(p, { workspace: "staging" }));
     expect(cfg.workspace).toBe("staging");
     expect(cfg.prune).toBe(true);
-    expect(cfg.mcpUrl).toBe("https://contextowl.co/mcp");
+    expect(cfg.apiUrl).toBe("https://contextowl.co/api/v1");
   });
 });

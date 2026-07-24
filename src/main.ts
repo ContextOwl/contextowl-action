@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import * as core from "@actions/core";
 import { type ActionInputs, resolveConfig } from "./config.js";
 import type { Logger } from "./logger.js";
-import { CowlClient } from "./mcp/client.js";
+import { RestClient } from "./api/client.js";
 import { runSync } from "./sync/index.js";
 import { totals } from "./sync/plan.js";
 
@@ -30,18 +30,10 @@ async function run(): Promise<void> {
   };
 
   const cfg = resolveConfig(inputs);
-  core.info(`ContextOwl endpoint: ${cfg.mcpUrl}`);
+  core.info(`ContextOwl API: ${cfg.apiUrl}`);
   if (cfg.dryRun) core.info("Dry run: no changes will be made.");
 
-  const client = new CowlClient(cfg.mcpUrl, cfg.token);
-  await client.connect();
-
-  let results;
-  try {
-    results = await runSync(client, logger, cfg, root);
-  } finally {
-    await client.close().catch(() => {});
-  }
+  const results = await runSync(new RestClient(cfg.apiUrl, cfg.token), logger, cfg, root);
 
   const t = totals(results);
   core.setOutput("created", t.created);

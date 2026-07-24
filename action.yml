@@ -10,7 +10,7 @@ inputs:
     description: "ContextOwl personal access token (cowl_pat_...). Store it in an encrypted secret."
     required: true
   server-url:
-    description: "Base URL of your ContextOwl instance. The action appends /mcp."
+    description: "Base URL of your ContextOwl instance. The action appends /api/v1."
     required: false
     default: "https://contextowl.co"
   config:

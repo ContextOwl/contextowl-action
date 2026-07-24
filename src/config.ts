@@ -36,7 +36,7 @@ export interface ActionInputs {
 
 /** Fully resolved settings the sync engine runs against. */
 export interface ResolvedConfig {
-  mcpUrl: string;
+  apiUrl: string;
   token: string;
   workspace: string | undefined;
   prune: boolean;
@@ -59,11 +59,11 @@ export function parseConfig(text: string): RawConfig {
   return result.data;
 }
 
-/** Join a base server URL with the /mcp path, tolerating trailing slashes. */
-export function mcpUrlFrom(serverUrl: string): string {
+/** Join a base server URL with the REST API path, tolerating trailing slashes. */
+export function apiUrlFrom(serverUrl: string): string {
   const trimmed = serverUrl.trim().replace(/\/+$/, "");
   if (!trimmed) throw new Error("server-url is empty");
-  return `${trimmed}/mcp`;
+  return `${trimmed}/api/v1`;
 }
 
 /**
@@ -91,7 +91,7 @@ export function resolveConfig(inputs: ActionInputs): ResolvedConfig {
   }
 
   return {
-    mcpUrl: mcpUrlFrom(serverUrl),
+    apiUrl: apiUrlFrom(serverUrl),
     token: inputs.token,
     workspace,
     prune: inputs.prune || raw.prune === true,

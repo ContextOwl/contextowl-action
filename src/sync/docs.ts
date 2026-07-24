@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Cowl, RemoteArticle } from "../types.js";
-import { CowlToolError } from "../types.js";
+import { CowlAPIError } from "../types.js";
 import type { Logger } from "../logger.js";
 import { type SurfaceResult, emptyResult } from "./plan.js";
 import { walkMarkdown } from "../util/walk.js";
@@ -104,7 +104,7 @@ export async function syncDocs(
       await cowl.updateArticle(opts.workspace, { slug, status });
       return true;
     } catch (err) {
-      if (err instanceof CowlToolError && err.isPermissionDenied("article.publish")) {
+      if (err instanceof CowlAPIError && err.isPermissionDenied("article.publish")) {
         publishDenied = true;
         warn("token lacks article.publish; leaving status unchanged");
         return false;
@@ -192,7 +192,7 @@ export async function syncDocs(
       result.lines.push(`updated "${d.title}"`);
       result.updated++;
     } catch (err) {
-      if (err instanceof CowlToolError && /openapi/i.test(err.message)) {
+      if (err instanceof CowlAPIError && /openapi/i.test(err.message)) {
         warn(`skipped OpenAPI-generated page "${r.title}"`);
       } else {
         warn(`update "${d.title}" failed: ${(err as Error).message}`);
@@ -214,7 +214,7 @@ export async function syncDocs(
       }
       if (publishDenied) break;
       const ok = await setStatus(a.slug, "DEPRECATED").catch((err) => {
-        if (err instanceof CowlToolError && /openapi/i.test(err.message)) {
+        if (err instanceof CowlAPIError && /openapi/i.test(err.message)) {
           warn(`skipped OpenAPI-generated page "${a.title}" during prune`);
           return false;
         }

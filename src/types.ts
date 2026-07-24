@@ -1,11 +1,7 @@
-// Shared domain types and the Cowl gateway interface.
-//
-// The gateway is the seam that keeps sync logic testable: the real
-// implementation (src/mcp/client.ts) talks to the ContextOwl MCP endpoint,
-// while tests inject an in-memory fake. Sync modules depend only on this
-// interface, never on the MCP SDK directly.
+// Shared domain types and the Cowl gateway interface. The gateway keeps sync
+// logic testable: production uses the REST API and tests inject an in-memory fake.
 
-/** Article row as returned by the `list_articles` MCP tool. */
+/** Article row as returned by the REST API. */
 export interface RemoteArticle {
   slug: string;
   title: string;
@@ -15,7 +11,7 @@ export interface RemoteArticle {
   encrypted: boolean;
 }
 
-/** Changelog entry as returned by `list_changelog` / `create_changelog`. */
+/** Changelog entry as returned by the REST API. */
 export interface RemoteChangelog {
   id: number;
   title: string;
@@ -65,9 +61,8 @@ export interface UpdateChangelogArgs {
 }
 
 /**
- * Typed wrapper over the ContextOwl MCP tools the action uses. Every method
- * targets a single workspace; pass `undefined` to let a workspace-bound token
- * resolve its own workspace server-side.
+ * Typed wrapper over the ContextOwl REST operations the action uses. Every
+ * method targets a single workspace; pass `undefined` for a workspace-bound key.
  */
 export interface Cowl {
   listArticles(workspace: string | undefined): Promise<RemoteArticle[]>;
@@ -83,19 +78,21 @@ export interface Cowl {
   attachOpenapi(workspace: string | undefined, spec: string): Promise<OpenapiStats | null>;
 }
 
-/** Error raised when an MCP tool returns an error result. */
-export class CowlToolError extends Error {
+/** Error raised when a REST operation returns an error response. */
+export class CowlAPIError extends Error {
   constructor(
-    public tool: string,
+    public operation: string,
     message: string,
+    public status?: number,
+    public code?: string,
   ) {
     super(message);
-    this.name = "CowlToolError";
+    this.name = "CowlAPIError";
   }
 
   /** True when the failure is a permission denial for `capability`. */
   isPermissionDenied(capability?: string): boolean {
-    if (!/permission denied/i.test(this.message)) return false;
+    if (this.status !== 403 || this.code !== "permission_denied") return false;
     return capability ? this.message.includes(capability) : true;
   }
 }

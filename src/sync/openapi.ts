@@ -2,7 +2,7 @@
 // The server diffs and prunes generated pages itself and returns the counts.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { Cowl } from "../types.js";
-import { CowlToolError } from "../types.js";
+import { CowlAPIError } from "../types.js";
 import type { Logger } from "../logger.js";
 import { type SurfaceResult, emptyResult } from "./plan.js";
 
@@ -40,7 +40,7 @@ export async function syncOpenapi(
       result.lines.push("attached OpenAPI spec");
     }
   } catch (err) {
-    if (err instanceof CowlToolError && err.isPermissionDenied("openapi.attach")) {
+    if (err instanceof CowlAPIError && err.isPermissionDenied("openapi.attach")) {
       result.warnings.push("token lacks openapi.attach; skipping OpenAPI sync");
       logger.warning("openapi: token lacks openapi.attach; skipping");
     } else {
