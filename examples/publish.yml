@@ -23,7 +23,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ContextOwl/contextowl-action@v1
         with:
-          token: ${{ secrets.CONTEXTOWL_TOKEN }}
+          # An existing CONTEXTOWL_TOKEN secret works the same way.
+          token: ${{ secrets.CONTEXTOWL_PAT }}
           # server-url: https://docs.your-company.com   # self-hosted only
           # prune: true                                  # mirror: remove stale content
           # dry-run: true                                # preview without writing
+          # fail-on-error: false                         # report failed items as warnings
