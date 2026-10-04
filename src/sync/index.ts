@@ -70,6 +70,7 @@ export async function runSync(
           workspace: cfg.workspace,
           prune: cfg.prune,
           dryRun: cfg.dryRun,
+          allowShrink: cfg.allowShrink,
         }),
       ),
     );

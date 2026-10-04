@@ -29,6 +29,7 @@ async function run(): Promise<void> {
     prune: core.getBooleanInput("prune"),
     dryRun: core.getBooleanInput("dry-run"),
     failOnError: core.getBooleanInput("fail-on-error"),
+    allowShrink: core.getBooleanInput("allow-shrink"),
   };
 
   const cfg = resolveConfig(inputs);

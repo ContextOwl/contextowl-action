@@ -33,6 +33,10 @@ inputs:
     description: "Fail the job when an item fails to sync. The action writes the job summary first. Set it to false to report failed items as warnings. An error that stops a whole surface, such as a rejected key, always fails the job."
     required: false
     default: "true"
+  allow-shrink:
+    description: "Accept a new article body that removes more than half of the current text and more than 2,000 characters. The server refuses such a body to guard against a broken file. When this is false, the article keeps its current body and counts as a failed item."
+    required: false
+    default: "false"
 
 outputs:
   created:

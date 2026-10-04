@@ -29,3 +29,4 @@ jobs:
           # prune: true                                  # mirror: remove stale content
           # dry-run: true                                # preview without writing
           # fail-on-error: false                         # report failed items as warnings
+          # allow-shrink: true                           # accept a body that removes most of an article

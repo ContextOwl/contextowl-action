@@ -61,6 +61,7 @@ describe("RestClient", () => {
           source: "openapi",
         },
       ]),
+      json([{ key: "guides", label: "Guides", visibility: "public", articleCount: 1 }]),
       json({ markdown: "# Intro" }),
       json({ slug: "intro", status: "DRAFT", nav: "guides" }, 201),
       json({ slug: "intro" }),
@@ -85,6 +86,7 @@ describe("RestClient", () => {
         source: "openapi",
       },
     ]);
+    await expect(c.listSections(undefined)).resolves.toEqual([{ key: "guides", label: "Guides" }]);
     await expect(c.getArticleMarkdown(undefined, "intro")).resolves.toBe("# Intro");
     await expect(
       c.createArticle(undefined, {
@@ -119,6 +121,7 @@ describe("RestClient", () => {
     const base = "https://contextowl.test/api/v1/workspaces/-";
     expect(calls.map(({ url, method, body }) => ({ url, method, body }))).toEqual([
       { url: `${base}/articles`, method: "GET", body: undefined },
+      { url: `${base}/sections`, method: "GET", body: undefined },
       { url: `${base}/articles/intro`, method: "GET", body: undefined },
       {
         url: `${base}/articles`,

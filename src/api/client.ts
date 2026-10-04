@@ -8,6 +8,7 @@ import {
   type OpenapiStats,
   type RemoteArticle,
   type RemoteChangelog,
+  type RemoteSection,
   type UpdateArticleArgs,
   type UpdateChangelogArgs,
   CowlAPIError,
@@ -101,6 +102,16 @@ export class RestClient implements Cowl {
           encrypted: bool(r.encrypted),
           source: str(r.source),
         };
+      });
+  }
+
+  async listSections(workspace: string | undefined): Promise<RemoteSection[]> {
+    const data = await this.request<unknown>("GET", `${this.workspacePath(workspace)}/sections`);
+    return asArray(data)
+      .filter(isRec)
+      .map((row) => {
+        const r = lc(row);
+        return { key: str(r.key), label: str(r.label) };
       });
   }
 

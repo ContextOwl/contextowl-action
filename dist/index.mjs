@@ -36450,6 +36450,7 @@ function resolveConfig(inputs) {
     prune: inputs.prune || raw.prune === true,
     dryRun: inputs.dryRun,
     failOnError: inputs.failOnError,
+    allowShrink: inputs.allowShrink,
     docs: raw.docs,
     changelog: raw.changelog,
     openapi: raw.openapi
@@ -36582,6 +36583,13 @@ var RestClient = class {
         encrypted: bool(r.encrypted),
         source: str2(r.source)
       };
+    });
+  }
+  async listSections(workspace) {
+    const data = await this.request("GET", `${this.workspacePath(workspace)}/sections`);
+    return asArray(data).filter(isRec).map((row) => {
+      const r = lc(row);
+      return { key: str2(r.key), label: str2(r.label) };
     });
   }
   async getArticleMarkdown(workspace, slug) {
@@ -36860,6 +36868,24 @@ var READ_CONCURRENCY = 5;
 function isPlaced(nav) {
   return nav !== "" && nav !== "none";
 }
+function labelKey(label) {
+  return label.trim().toLowerCase();
+}
+async function sectionKeyMap(cowl, workspace, articles) {
+  let sections;
+  try {
+    sections = await cowl.listSections(workspace);
+  } catch (err) {
+    if (!(err instanceof CowlAPIError && (err.status === 404 || err.status === 405))) throw err;
+    sections = articles.filter((a) => isPlaced(a.nav)).map((a) => ({ key: a.nav, label: a.section }));
+  }
+  const keys = /* @__PURE__ */ new Map();
+  for (const { key, label } of sections) {
+    const k = labelKey(label);
+    if (k && key && !keys.has(k)) keys.set(k, key);
+  }
+  return keys;
+}
 function isGeneratedPageError(err) {
   return err instanceof CowlAPIError && err.code === "openapi_generated";
 }
@@ -36897,11 +36923,7 @@ async function syncDocs(cowl, logger2, opts) {
     }
   }
   const listed = await cowl.listArticles(opts.workspace);
-  const sectionKeys = /* @__PURE__ */ new Map();
-  for (const a of listed) {
-    const label = a.section.toLowerCase();
-    if (label && isPlaced(a.nav) && !sectionKeys.has(label)) sectionKeys.set(label, a.nav);
-  }
+  const sectionKeys = await sectionKeyMap(cowl, opts.workspace, listed);
   const remote = listed.filter((a) => !a.encrypted);
   const bySlug = new Map(remote.map((a) => [a.slug, a]));
   const byTitle = /* @__PURE__ */ new Map();
@@ -36945,17 +36967,17 @@ async function syncDocs(cowl, logger2, opts) {
     } catch (err) {
       if (err instanceof CowlAPIError && err.isPermissionDenied("article.publish")) {
         publishDenied = true;
-        warn("token lacks article.publish; leaving status unchanged");
+        warn("the key lacks article.publish, so the action does not change article status.");
         return false;
       }
       throw err;
     }
   };
   const ensureSectionKey = async (label) => {
-    const existing = sectionKeys.get(label.toLowerCase());
+    const existing = sectionKeys.get(labelKey(label));
     if (existing) return existing;
     const key = await cowl.createSection(opts.workspace, label);
-    sectionKeys.set(label.toLowerCase(), key);
+    sectionKeys.set(labelKey(label), key);
     return key;
   };
   let sectionKeyRejected = false;
@@ -36979,6 +37001,15 @@ async function syncDocs(cowl, logger2, opts) {
     } catch (err) {
       if (!(err instanceof CowlAPIError) || err.code !== "large_removal") throw err;
       if (patch.markdown === void 0) throw err;
+      if (!opts.allowShrink) {
+        throw new CowlAPIError(
+          err.operation,
+          `${removalText(err)}. To accept it, set the allow-shrink input to true`,
+          err.status,
+          err.code,
+          err.details
+        );
+      }
       warn(`"${d.title}": ${removalText(err)}. The action sends it with allow_shrink.`);
       await cowl.updateArticle(opts.workspace, { ...patch, allowShrink: true });
     }
@@ -36990,7 +37021,7 @@ async function syncDocs(cowl, logger2, opts) {
       continue;
     }
     try {
-      const known = sectionKeys.get(d.section.toLowerCase());
+      const known = sectionKeys.get(labelKey(d.section));
       const created = await createArticle(d, known);
       if (!known || created.nav !== known) {
         const key = known ?? await ensureSectionKey(d.section);
@@ -37016,7 +37047,7 @@ async function syncDocs(cowl, logger2, opts) {
       patch.title = d.title;
       reasons.push("title");
     }
-    const sectionChanged = d.section.toLowerCase() !== r.section.toLowerCase();
+    const sectionChanged = labelKey(d.section) !== labelKey(r.section);
     if (sectionChanged) {
       patch.section = d.section;
       reasons.push("section");
@@ -37503,7 +37534,8 @@ async function runSync(cowl, logger2, cfg, root) {
           dir: docsDir,
           workspace: cfg.workspace,
           prune: cfg.prune,
-          dryRun: cfg.dryRun
+          dryRun: cfg.dryRun,
+          allowShrink: cfg.allowShrink
         })
       )
     );
@@ -37559,7 +37591,8 @@ async function run() {
     workspace: core.getInput("workspace"),
     prune: core.getBooleanInput("prune"),
     dryRun: core.getBooleanInput("dry-run"),
-    failOnError: core.getBooleanInput("fail-on-error")
+    failOnError: core.getBooleanInput("fail-on-error"),
+    allowShrink: core.getBooleanInput("allow-shrink")
   };
   const cfg = resolveConfig(inputs);
   core.info(`ContextOwl API: ${cfg.apiUrl}`);

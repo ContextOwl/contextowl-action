@@ -21,6 +21,7 @@ const opts = (dir: string, over = {}) => ({
   workspace: undefined,
   prune: false,
   dryRun: false,
+  allowShrink: false,
   ...over,
 });
 
@@ -84,16 +85,30 @@ describe("syncDocs", () => {
     expect(cowl.articles.get("intro")!.nav).toBe("guides");
   });
 
-  it("ignores unplaced articles when it maps section labels to keys", async () => {
+  it("sends section_key for an existing section that has no articles", async () => {
     const cowl = new FakeCowl();
-    cowl.seedArticle({ title: "Draft", section: "Guides", nav: "none", markdown: "wip" });
-    const dir = writeTree({ "guides/intro.md": "---\ntitle: Intro\n---\nhello" });
+    cowl.sections.set("reference", "Reference");
+    const dir = writeTree({ "reference/api.md": "---\ntitle: API\n---\nhello" });
     const r = await syncDocs(cowl, nullLogger, opts(dir));
 
-    expect(r.created).toBe(1);
-    expect(cowl.createArticleCalls[0].sectionKey).toBeUndefined();
-    expect(cowl.log).toEqual(["create Intro", "section Guides", "place intro guides"]);
-    expect(cowl.articles.get("intro")!.nav).toBe("guides");
+    expect([r.created, r.failed]).toEqual([1, 0]);
+    expect(cowl.log).toEqual(["create API section_key=reference"]);
+    expect(cowl.createSectionCalls).toEqual([]);
+    expect(cowl.sections.size).toBe(1);
+  });
+
+  it("ignores unplaced articles when it maps section labels to keys, on every server", async () => {
+    for (const legacy of [false, true]) {
+      const cowl = new FakeCowl({ legacy });
+      cowl.seedArticle({ title: "Draft", section: "Guides", nav: "none", markdown: "wip" });
+      const dir = writeTree({ "guides/intro.md": "---\ntitle: Intro\n---\nhello" });
+      const r = await syncDocs(cowl, nullLogger, opts(dir));
+
+      expect(r.created).toBe(1);
+      expect(cowl.createArticleCalls[0].sectionKey).toBeUndefined();
+      expect(cowl.log).toEqual(["create Intro", "section Guides", "place intro guides"]);
+      expect(cowl.articles.get("intro")!.nav).toBe("guides");
+    }
   });
 
   it("places the first article of a new section, then uses section_key", async () => {
@@ -240,11 +255,25 @@ describe("syncDocs", () => {
     expect(cowl.articles.get("intro")!.markdown).toBe("old");
   });
 
-  it("sends a large removal again with allow_shrink", async () => {
+  it("counts a large removal as a failed item and keeps the body without allow-shrink", async () => {
+    const cowl = new FakeCowl();
+    cowl.seedArticle({ title: "Big", status: "BETA", markdown: "x".repeat(5000) });
+    const dir = writeTree({ "guides/big.md": "---\ntitle: Big\nstatus: STABLE\n---\nshort" });
+    const r = await syncDocs(cowl, nullLogger, opts(dir));
+
+    expect([r.updated, r.failed]).toEqual([0, 1]);
+    expect(r.failures).toEqual([
+      'update "Big" failed: 422 large_removal: the new body removes 4995 of 5000 characters. To accept it, set the allow-shrink input to true',
+    ]);
+    expect(cowl.log).toEqual(["update big markdown"]);
+    expect(cowl.articles.get("big")).toMatchObject({ markdown: "x".repeat(5000), status: "BETA" });
+  });
+
+  it("sends a large removal again with allow_shrink when allow-shrink is true", async () => {
     const cowl = new FakeCowl();
     cowl.seedArticle({ title: "Big", markdown: "x".repeat(5000) });
     const dir = writeTree({ "guides/big.md": "---\ntitle: Big\n---\nshort" });
-    const r = await syncDocs(cowl, nullLogger, opts(dir));
+    const r = await syncDocs(cowl, nullLogger, opts(dir, { allowShrink: true }));
 
     expect([r.updated, r.failed]).toEqual([1, 0]);
     expect(cowl.log).toEqual(["update big markdown", "update big markdown allow_shrink"]);

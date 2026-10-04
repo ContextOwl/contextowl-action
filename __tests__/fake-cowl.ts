@@ -14,6 +14,7 @@ import type {
   OpenapiStats,
   RemoteArticle,
   RemoteChangelog,
+  RemoteSection,
   UpdateArticleArgs,
   UpdateChangelogArgs,
 } from "../src/types.js";
@@ -217,6 +218,17 @@ export class FakeCowl implements Cowl {
     return [...this.articles.values()].map(({ markdown: _m, ...row }) =>
       this.legacy ? { ...row, source: "" } : row,
     );
+  }
+
+  async listSections(): Promise<RemoteSection[]> {
+    this.enter("listSections");
+    if (this.legacy) {
+      throw apiError("list sections", 404, {
+        code: "not_found",
+        message: "no such endpoint: GET /api/v1/workspaces/-/sections",
+      });
+    }
+    return [...this.sections].map(([key, label]) => ({ key, label }));
   }
 
   async getArticleMarkdown(_ws: string | undefined, slug: string): Promise<string> {

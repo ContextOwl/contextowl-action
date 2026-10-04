@@ -33,6 +33,7 @@ export interface ActionInputs {
   prune: boolean;
   dryRun: boolean;
   failOnError: boolean;
+  allowShrink: boolean;
 }
 
 /** Fully resolved settings the sync engine runs against. */
@@ -43,6 +44,7 @@ export interface ResolvedConfig {
   prune: boolean;
   dryRun: boolean;
   failOnError: boolean;
+  allowShrink: boolean;
   docs?: { dir: string };
   changelog?: { file: string };
   openapi?: { spec: string };
@@ -99,6 +101,7 @@ export function resolveConfig(inputs: ActionInputs): ResolvedConfig {
     prune: inputs.prune || raw.prune === true,
     dryRun: inputs.dryRun,
     failOnError: inputs.failOnError,
+    allowShrink: inputs.allowShrink,
     docs: raw.docs,
     changelog: raw.changelog,
     openapi: raw.openapi,

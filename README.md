@@ -44,15 +44,16 @@ action reads the key from the `token` input, so you choose the secret name.
 
 ## Inputs
 
-| Input           | Default                 | Description                                                                                |
-| --------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
-| `token`         | required                | Agent key that starts with `cowl_pat_`. Pass it from a secret.                             |
-| `server-url`    | `https://contextowl.co` | Base URL of the ContextOwl instance. The action appends `/api/v1`.                         |
-| `config`        | `.contextowl.yml`       | Path to the config file, relative to the repository root.                                  |
-| `workspace`     | empty                   | Target workspace. It overrides the config file. Leave it empty for a workspace-bound key.  |
-| `prune`         | `false`                 | Remove content that is no longer in the repository.                                        |
-| `dry-run`       | `false`                 | Print the plan and make no changes.                                                        |
-| `fail-on-error` | `true`                  | Fail the job when an item fails to sync. Set it to `false` to report failures as warnings. |
+| Input           | Default                 | Description                                                                                             |
+| --------------- | ----------------------- | ------------------------------------------------------------------------------------------------------- |
+| `token`         | required                | Agent key that starts with `cowl_pat_`. Pass it from a secret.                                          |
+| `server-url`    | `https://contextowl.co` | Base URL of the ContextOwl instance. The action appends `/api/v1`.                                      |
+| `config`        | `.contextowl.yml`       | Path to the config file, relative to the repository root.                                               |
+| `workspace`     | empty                   | Target workspace. It overrides the config file. Leave it empty for a workspace-bound key.               |
+| `prune`         | `false`                 | Remove content that is no longer in the repository.                                                     |
+| `dry-run`       | `false`                 | Print the plan and make no changes.                                                                     |
+| `fail-on-error` | `true`                  | Fail the job when an item fails to sync. Set it to `false` to report failures as warnings.              |
+| `allow-shrink`  | `false`                 | Accept a new article body that removes most of the current text. See [Large removals](#large-removals). |
 
 ## Outputs
 
@@ -100,6 +101,16 @@ The action writes the job summary first. Then it sets the job result:
 - When the server answers `402` or `403` to the OpenAPI upload, the action skips
   the OpenAPI step with a warning.
 
+### Large removals
+
+The server refuses a new article body that removes more than half of the
+current text and more than 2,000 characters. This guards a live article against
+a truncated or broken file. The article keeps its current body and counts as a
+failed item.
+
+To accept such a change, set `allow-shrink: true`. The action then sends the
+body again with `allow_shrink` and logs a warning.
+
 ## Sync behavior
 
 - The action skips content that did not change, so revision history and the
@@ -112,9 +123,6 @@ The action writes the job summary first. Then it sets the job result:
 - An article that an earlier run could not place goes into its section on the
   next run.
 - The action never changes encrypted articles or generated OpenAPI pages.
-- The repository is the source of truth. When the server refuses a new body as a
-  large removal, the action sends it again with `allow_shrink` and logs a
-  warning.
 - When the server answers `429`, the action waits for the `Retry-After` time and
   sends the request again, up to 3 times. A read request does the same for
   `502`, `503`, and `504`.

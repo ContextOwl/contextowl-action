@@ -45,6 +45,7 @@ describe("resolveConfig", () => {
     prune: false,
     dryRun: false,
     failOnError: true,
+    allowShrink: false,
     ...over,
   });
 
@@ -57,10 +58,13 @@ describe("resolveConfig", () => {
     expect(() => resolveConfig(inputs("/no/such/file.yml"))).toThrow(/not found/);
   });
 
-  it("passes fail-on-error through", () => {
+  it("passes fail-on-error and allow-shrink through", () => {
     const p = write("docs:\n  dir: docs\n");
-    expect(resolveConfig(inputs(p)).failOnError).toBe(true);
-    expect(resolveConfig(inputs(p, { failOnError: false })).failOnError).toBe(false);
+    expect(resolveConfig(inputs(p))).toMatchObject({ failOnError: true, allowShrink: false });
+    expect(resolveConfig(inputs(p, { failOnError: false, allowShrink: true }))).toMatchObject({
+      failOnError: false,
+      allowShrink: true,
+    });
   });
 
   it("lets the input override the config workspace and enables prune from either", () => {

@@ -14,6 +14,12 @@ export interface RemoteArticle {
   source: string;
 }
 
+/** Sidebar section as returned by the REST API. */
+export interface RemoteSection {
+  key: string;
+  label: string;
+}
+
 /** Changelog entry as returned by the REST API. */
 export interface RemoteChangelog {
   id: number;
@@ -94,6 +100,8 @@ export interface UpdateChangelogArgs {
  */
 export interface Cowl {
   listArticles(workspace: string | undefined): Promise<RemoteArticle[]>;
+  /** List the sidebar sections in sidebar order. Servers before the contract answer 404. */
+  listSections(workspace: string | undefined): Promise<RemoteSection[]>;
   getArticleMarkdown(workspace: string | undefined, slug: string): Promise<string>;
   createArticle(workspace: string | undefined, args: CreateArticleArgs): Promise<CreatedArticle>;
   updateArticle(workspace: string | undefined, args: UpdateArticleArgs): Promise<void>;

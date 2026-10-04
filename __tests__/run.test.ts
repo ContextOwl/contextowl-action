@@ -23,6 +23,7 @@ const config = (over: Partial<ResolvedConfig> = {}): ResolvedConfig => ({
   prune: false,
   dryRun: false,
   failOnError: true,
+  allowShrink: false,
   docs: { dir: "docs" },
   changelog: { file: "CHANGELOG.md" },
   ...over,

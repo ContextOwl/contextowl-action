@@ -7,7 +7,13 @@
 // deprecates workspace articles absent from the repo (there is no hard delete).
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { Cowl, CreatedArticle, RemoteArticle, UpdateArticleArgs } from "../types.js";
+import type {
+  Cowl,
+  CreatedArticle,
+  RemoteArticle,
+  RemoteSection,
+  UpdateArticleArgs,
+} from "../types.js";
 import { CowlAPIError, describeError } from "../types.js";
 import type { Logger } from "../logger.js";
 import { type SurfaceResult, emptyResult } from "./plan.js";
@@ -21,6 +27,8 @@ export interface DocsSyncOptions {
   workspace: string | undefined;
   prune: boolean;
   dryRun: boolean;
+  /** Accept a body that the server refuses as a large removal. */
+  allowShrink: boolean;
 }
 
 const READ_CONCURRENCY = 5;
@@ -28,6 +36,39 @@ const READ_CONCURRENCY = 5;
 /** True when `nav` holds a sidebar section key. Unplaced articles have `none` or "". */
 function isPlaced(nav: string): boolean {
   return nav !== "" && nav !== "none";
+}
+
+/** Section labels match without regard to case or outer spaces, as on the server. */
+function labelKey(label: string): string {
+  return label.trim().toLowerCase();
+}
+
+/**
+ * Map each section label to its sidebar key. The section list also holds
+ * sections without articles. Servers before the contract have no section list,
+ * so the map then comes from the labels of placed articles. An unplaced
+ * article keeps the label from its create, but its nav is `none`.
+ */
+async function sectionKeyMap(
+  cowl: Cowl,
+  workspace: string | undefined,
+  articles: readonly RemoteArticle[],
+): Promise<Map<string, string>> {
+  let sections: RemoteSection[];
+  try {
+    sections = await cowl.listSections(workspace);
+  } catch (err) {
+    if (!(err instanceof CowlAPIError && (err.status === 404 || err.status === 405))) throw err;
+    sections = articles
+      .filter((a) => isPlaced(a.nav))
+      .map((a) => ({ key: a.nav, label: a.section }));
+  }
+  const keys = new Map<string, string>();
+  for (const { key, label } of sections) {
+    const k = labelKey(label);
+    if (k && key && !keys.has(k)) keys.set(k, key);
+  }
+  return keys;
 }
 
 function isGeneratedPageError(err: unknown): boolean {
@@ -79,13 +120,7 @@ export async function syncDocs(
   }
 
   const listed = await cowl.listArticles(opts.workspace);
-  // Map each section label to its sidebar key. Use placed articles only: an
-  // unplaced article keeps the label from its create, but its nav is `none`.
-  const sectionKeys = new Map<string, string>();
-  for (const a of listed) {
-    const label = a.section.toLowerCase();
-    if (label && isPlaced(a.nav) && !sectionKeys.has(label)) sectionKeys.set(label, a.nav);
-  }
+  const sectionKeys = await sectionKeyMap(cowl, opts.workspace, listed);
 
   // Remote index; encrypted articles are untouchable and excluded entirely.
   const remote = listed.filter((a) => !a.encrypted);
@@ -137,7 +172,7 @@ export async function syncDocs(
     } catch (err) {
       if (err instanceof CowlAPIError && err.isPermissionDenied("article.publish")) {
         publishDenied = true;
-        warn("token lacks article.publish; leaving status unchanged");
+        warn("the key lacks article.publish, so the action does not change article status.");
         return false;
       }
       throw err;
@@ -145,10 +180,10 @@ export async function syncDocs(
   };
 
   const ensureSectionKey = async (label: string): Promise<string> => {
-    const existing = sectionKeys.get(label.toLowerCase());
+    const existing = sectionKeys.get(labelKey(label));
     if (existing) return existing;
     const key = await cowl.createSection(opts.workspace, label);
-    sectionKeys.set(label.toLowerCase(), key);
+    sectionKeys.set(labelKey(label), key);
     return key;
   };
 
@@ -174,14 +209,25 @@ export async function syncDocs(
     }
   };
 
-  // The repository is the source of truth. When the server refuses a body as a
-  // large removal, the action sends it again with allow_shrink.
+  // The server refuses a body that removes most of an article (large_removal),
+  // which guards against a broken file. The action sends the body again with
+  // allow_shrink only when allow-shrink is true. It never sends allow_shrink
+  // first, because servers before the contract reject the unknown field.
   const patchArticle = async (d: DesiredArticle, patch: UpdateArticleArgs): Promise<void> => {
     try {
       await cowl.updateArticle(opts.workspace, patch);
     } catch (err) {
       if (!(err instanceof CowlAPIError) || err.code !== "large_removal") throw err;
       if (patch.markdown === undefined) throw err;
+      if (!opts.allowShrink) {
+        throw new CowlAPIError(
+          err.operation,
+          `${removalText(err)}. To accept it, set the allow-shrink input to true`,
+          err.status,
+          err.code,
+          err.details,
+        );
+      }
       warn(`"${d.title}": ${removalText(err)}. The action sends it with allow_shrink.`);
       await cowl.updateArticle(opts.workspace, { ...patch, allowShrink: true });
     }
@@ -196,7 +242,7 @@ export async function syncDocs(
       continue;
     }
     try {
-      const known = sectionKeys.get(d.section.toLowerCase());
+      const known = sectionKeys.get(labelKey(d.section));
       const created = await createArticle(d, known);
       if (!known || created.nav !== known) {
         const key = known ?? (await ensureSectionKey(d.section));
@@ -224,7 +270,7 @@ export async function syncDocs(
       patch.title = d.title;
       reasons.push("title");
     }
-    const sectionChanged = d.section.toLowerCase() !== r.section.toLowerCase();
+    const sectionChanged = labelKey(d.section) !== labelKey(r.section);
     if (sectionChanged) {
       patch.section = d.section;
       reasons.push("section");
