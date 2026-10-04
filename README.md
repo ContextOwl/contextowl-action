@@ -92,6 +92,11 @@ The action writes the job summary first. Then it sets the job result:
   other surfaces still run.
 - When the key lacks `article.publish`, `changelog.publish`, or
   `changelog.delete`, the action logs a warning and continues without that step.
+  Without `changelog.publish`, new changelog entries stay drafts.
+- When the key lacks `changelog.update`, the action sees only published
+  changelog entries. It does not create a draft or a scheduled entry, because
+  the next run cannot find that entry and creates it again. Each such version is
+  a failed item. Add `changelog.update` to the key to sync these versions.
 - When the server answers `402` or `403` to the OpenAPI upload, the action skips
   the OpenAPI step with a warning.
 
@@ -100,7 +105,9 @@ The action writes the job summary first. Then it sets the job result:
 - The action skips content that did not change, so revision history and the
   audit log stay clean.
 - The changelog sync reads all remote entries, 100 for each request. A file with
-  many versions never creates duplicate entries.
+  many versions never creates duplicate entries. When the server does not
+  support paging and returns 50 entries or more, the changelog sync stops before
+  it changes an entry.
 - A new article goes into its sidebar section when the action creates it.
 - An article that an earlier run could not place goes into its section on the
   next run.

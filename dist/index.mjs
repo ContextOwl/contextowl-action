@@ -37176,7 +37176,10 @@ function parseChangelog(text) {
 
 // src/sync/changelog.ts
 var CHANGELOG_PAGE_SIZE = 100;
+var LEGACY_LIST_CAP = 50;
 var SECTION_NAMES = "Added, Changed, Deprecated, Removed, Fixed and Security";
+var HIDDEN_DRAFT = "the key lacks changelog.publish and changelog.update. The next run cannot find a draft, so the action does not create one. Add one of the two permissions to the key.";
+var HIDDEN_SCHEDULED = "the date is in the future, and the key lacks changelog.update. The next run cannot find a scheduled entry, so the action waits for a run after that date. To create it now, add changelog.update to the key.";
 function tagsEqual(a, b) {
   if (a.length !== b.length) return false;
   const sa = [...a].sort();
@@ -37187,6 +37190,9 @@ function sameInstant(a, b) {
   if (!a) return true;
   if (!b) return false;
   return new Date(a).getTime() === new Date(b).getTime();
+}
+function isFuture(date) {
+  return date !== void 0 && new Date(date).getTime() > Date.now();
 }
 function firstFew(items) {
   const shown = items.slice(0, 3).join(", ");
@@ -37201,17 +37207,19 @@ async function listAllChangelog(cowl, workspace, drafts) {
       limit: CHANGELOG_PAGE_SIZE,
       offset
     });
-    const fresh = page.filter((e) => !seen.has(e.id));
-    for (const e of fresh) {
+    let added = 0;
+    for (const e of page) {
+      if (seen.has(e.id)) continue;
       seen.add(e.id);
       entries.push(e);
+      added++;
     }
-    if (page.length < CHANGELOG_PAGE_SIZE) return entries;
-    if (fresh.length === 0) {
+    if (page.length > 0 && added === 0) {
       throw new Error(
-        `the changelog list at offset ${offset} repeats entries that the action already has. The server does not support offset paging.`
+        `the changelog list repeats the entries of an earlier page at offset ${offset}. The server does not support offset paging. The action stops before any change, because an incomplete list causes duplicate entries.`
       );
     }
+    if (page.length < CHANGELOG_PAGE_SIZE && page.length !== LEGACY_LIST_CAP) return entries;
     offset += page.length;
   }
 }
@@ -37257,13 +37265,15 @@ async function syncChangelog(cowl, logger2, opts) {
     );
   }
   let remote;
+  let draftsHidden = false;
   try {
     remote = await listAllChangelog(cowl, opts.workspace, true);
   } catch (err) {
     if (!(err instanceof CowlAPIError && err.isPermissionDenied())) throw err;
     remote = await listAllChangelog(cowl, opts.workspace, false);
+    draftsHidden = true;
     warn(
-      "the key cannot list drafts, so the action matches only published entries. Unpublished versions can get duplicates. Add changelog.update to the key."
+      "the key lacks changelog.update, so the action sees only published entries. A version that exists only as a draft or a scheduled entry can get a second entry. Add changelog.update to the key."
     );
   }
   const byTitle = /* @__PURE__ */ new Map();
@@ -37273,6 +37283,15 @@ async function syncChangelog(cowl, logger2, opts) {
   }
   const claimed = /* @__PURE__ */ new Set();
   let publishDenied = false;
+  const denyPublish = () => {
+    if (publishDenied) return;
+    publishDenied = true;
+    if (!draftsHidden) {
+      warn(
+        "the key lacks changelog.publish, so new entries stay drafts and the action does not publish drafts."
+      );
+    }
+  };
   const create = async (d) => {
     const base = {
       title: d.version,
@@ -37280,19 +37299,19 @@ async function syncChangelog(cowl, logger2, opts) {
       tags: d.tags,
       publishedAt: d.publishedAt
     };
+    if (publishDenied && draftsHidden) throw new Error(HIDDEN_DRAFT);
     try {
       await cowl.createChangelog(opts.workspace, {
         ...base,
         status: publishDenied ? "draft" : "published"
       });
     } catch (err) {
-      if (err instanceof CowlAPIError && err.isPermissionDenied("changelog.publish")) {
-        publishDenied = true;
-        warn("token lacks changelog.publish; creating entries as drafts");
-        await cowl.createChangelog(opts.workspace, base);
-      } else {
+      if (!(err instanceof CowlAPIError && err.isPermissionDenied("changelog.publish"))) {
         throw err;
       }
+      denyPublish();
+      if (draftsHidden) throw new Error(HIDDEN_DRAFT);
+      await cowl.createChangelog(opts.workspace, base);
     }
     result.lines.push(`created "${d.version}"`);
     result.created++;
@@ -37330,8 +37349,7 @@ async function syncChangelog(cowl, logger2, opts) {
       await cowl.updateChangelog(opts.workspace, patch);
     } catch (err) {
       if (err instanceof CowlAPIError && err.isPermissionDenied("changelog.publish") && patch.status) {
-        publishDenied = true;
-        warn("token lacks changelog.publish; updating without status");
+        denyPublish();
         delete patch.status;
         if (patch.markdown !== void 0 || patch.tags !== void 0 || patch.publishedAt !== void 0) {
           await cowl.updateChangelog(opts.workspace, patch);
@@ -37352,6 +37370,8 @@ async function syncChangelog(cowl, logger2, opts) {
       if (r) {
         claimed.add(r.id);
         await update(d, r);
+      } else if (draftsHidden && isFuture(d.publishedAt)) {
+        throw new Error(HIDDEN_SCHEDULED);
       } else if (opts.dryRun) {
         result.lines.push(`create "${d.version}"`);
         result.created++;

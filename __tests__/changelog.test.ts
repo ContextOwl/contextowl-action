@@ -100,6 +100,32 @@ describe("syncChangelog", () => {
     ]);
   });
 
+  it("reads one more page after a page of exactly 50 entries", async () => {
+    const cowl = new FakeCowl();
+    const file = writeChangelog(keepAChangelog(50));
+    await syncChangelog(cowl, nullLogger, opts(file));
+
+    cowl.changelogListCalls = [];
+    const r = await syncChangelog(cowl, nullLogger, opts(file));
+    expect([r.created, r.skipped]).toEqual([0, 50]);
+    expect(cowl.changelogListCalls.map((q) => [q.limit, q.offset])).toEqual([
+      [100, 0],
+      [100, 50],
+    ]);
+  });
+
+  it("stops before any write when a server before the contract caps the list at 50", async () => {
+    const cowl = new FakeCowl({ legacy: true });
+    const file = writeChangelog(keepAChangelog(60));
+    const first = await syncChangelog(cowl, nullLogger, opts(file));
+    expect(first.created).toBe(60);
+
+    cowl.log = [];
+    await expect(syncChangelog(cowl, nullLogger, opts(file))).rejects.toThrow(/offset paging/);
+    expect(cowl.log).toEqual([]);
+    expect(cowl.changelog).toHaveLength(60);
+  });
+
   it("stops before any write when the server repeats a page", async () => {
     const cowl = new FakeCowl();
     for (let i = 0; i < 150; i++) cowl.seedChangelog({ title: `0.${i}.0`, markdown: "x" });
@@ -168,6 +194,48 @@ describe("syncChangelog", () => {
     expect(cowl.changelogListCalls.map((q) => q.drafts)).toEqual([true, false]);
     expect(r.warnings.join(" ")).toMatch(/changelog\.update/);
     expect([r.created, r.skipped, r.failed]).toEqual([1, 1, 0]);
+  });
+
+  it("never creates a draft that the next run cannot find", async () => {
+    const cowl = new FakeCowl();
+    cowl.perms.changelogUpdate = false;
+    cowl.perms.changelogPublish = false;
+    const file = writeChangelog(
+      "## [1.1.0] - 2024-02-01\nsecond\n## [1.0.0] - 2024-01-01\nfirst\n",
+    );
+
+    for (let run = 1; run <= 2; run++) {
+      cowl.log = [];
+      const r = await syncChangelog(cowl, nullLogger, opts(file));
+
+      expect([r.created, r.failed]).toEqual([0, 2]);
+      expect(r.failures).toEqual(
+        ["1.1.0", "1.0.0"].map(
+          (v) =>
+            `entry "${v}" failed: the key lacks changelog.publish and changelog.update. The next run cannot find a draft, so the action does not create one. Add one of the two permissions to the key.`,
+        ),
+      );
+      expect(r.warnings).toHaveLength(1);
+      expect(cowl.log).toEqual(["create changelog 1.1.0"]);
+    }
+    expect(cowl.changelog).toEqual([]);
+  });
+
+  it("never creates a scheduled entry that the next run cannot find", async () => {
+    const cowl = new FakeCowl();
+    cowl.perms.changelogUpdate = false;
+    const file = writeChangelog("## [2.0.0] - 2999-01-01\nlater\n## [1.0.0] - 2024-01-01\nfirst\n");
+
+    for (let run = 1; run <= 2; run++) {
+      const r = await syncChangelog(cowl, nullLogger, opts(file));
+
+      expect(r.failed).toBe(1);
+      expect(r.failures[0]).toMatch(/^entry "2\.0\.0" failed: the date is in the future/);
+    }
+    expect(cowl.changelog.map((e) => e.title)).toEqual(["1.0.0"]);
+
+    const plan = await syncChangelog(cowl, nullLogger, opts(file, { dryRun: true }));
+    expect([plan.created, plan.failed]).toEqual([0, 1]);
   });
 
   it("counts a failed entry and continues with the next one", async () => {
