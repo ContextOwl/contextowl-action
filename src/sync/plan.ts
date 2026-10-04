@@ -7,7 +7,7 @@ export interface SurfaceResult {
   updated: number;
   deleted: number; // deletions, plus docs deprecations under prune
   skipped: number;
-  /** Items that failed to sync. */
+  /** Items that failed to sync. A stopped surface counts as one failed item. */
   failed: number;
   warnings: string[];
   /** One message per failed item, plus the error that stopped the surface. */

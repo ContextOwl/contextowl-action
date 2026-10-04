@@ -14,7 +14,7 @@ inputs:
     required: false
     default: "https://contextowl.co"
   config:
-    description: "Path to the .contextowl.yml config file, relative to the repo root."
+    description: "Path to the .contextowl.yml config file, relative to the repo root. In the changelog file, the ### subsections Added, Changed, Deprecated, Removed, Fixed and Security map to the tags new, improved, deprecated, deprecated, fixed and security. The match ignores case. Other subsection names get no tag and a warning."
     required: false
     default: ".contextowl.yml"
   workspace:
@@ -48,7 +48,7 @@ outputs:
   skipped:
     description: "Number of unchanged items skipped."
   failed:
-    description: "Number of items that failed to sync."
+    description: "Number of items that failed to sync. A surface that stops before it finishes, for example after a rejected key, counts as 1."
 
 runs:
   using: "node24"

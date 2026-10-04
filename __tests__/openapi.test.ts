@@ -66,7 +66,7 @@ describe("syncOpenapi", () => {
 
     expect(r.failed).toBe(0);
     expect(r.warnings).toEqual([
-      "skipped the OpenAPI step because the workspace plan does not include the OpenAPI reference. Server error: 402 upgrade_required: your plan does not include this endpoint",
+      "skipped the OpenAPI step because your plan does not include the OpenAPI reference on this server. Server error: 402 upgrade_required: your plan does not include this endpoint",
     ]);
   });
 

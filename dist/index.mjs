@@ -37448,7 +37448,7 @@ async function syncChangelog(cowl, logger2, opts) {
 // src/sync/openapi.ts
 import { existsSync as existsSync3, readFileSync as readFileSync4, statSync as statSync3 } from "node:fs";
 function skipReason(err) {
-  if (err.status === 402) return "the workspace plan does not include the OpenAPI reference";
+  if (err.status === 402) return "your plan does not include the OpenAPI reference on this server";
   const permission = err.details.permission;
   return `the key lacks ${typeof permission === "string" ? permission : "openapi.attach"}`;
 }
@@ -37499,6 +37499,7 @@ async function runSurface(logger2, surface, group, sync) {
   } catch (err) {
     r = emptyResult(surface);
     r.stopped = true;
+    r.failed = 1;
     r.failures.push(`${surface} sync stopped: ${describeError(err)}`);
     logger2.error(`${surface}: sync stopped: ${describeError(err)}`);
   }

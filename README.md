@@ -58,7 +58,8 @@ action reads the key from the `token` input, so you choose the secret name.
 ## Outputs
 
 `created`, `updated`, `deleted`, `skipped`, and `failed` hold the totals for all
-surfaces. The action also writes a summary table to the workflow run.
+surfaces. A surface that stops before it finishes counts as 1 in `failed`. The
+action also writes a summary table to the workflow run.
 
 ## Changelog tags
 

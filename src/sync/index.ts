@@ -12,6 +12,8 @@ import { syncOpenapi } from "./openapi.js";
 /**
  * Run one surface inside a log group. An error that stops the surface becomes
  * part of its result, so the other surfaces still run and the summary shows it.
+ * A stopped surface counts as one failed item, so the `failed` output is never
+ * 0 for a surface that did not finish.
  */
 async function runSurface(
   logger: Logger,
@@ -26,6 +28,7 @@ async function runSurface(
   } catch (err) {
     r = emptyResult(surface);
     r.stopped = true;
+    r.failed = 1;
     r.failures.push(`${surface} sync stopped: ${describeError(err)}`);
     logger.error(`${surface}: sync stopped: ${describeError(err)}`);
   }

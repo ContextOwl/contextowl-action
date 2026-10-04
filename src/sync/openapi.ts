@@ -14,7 +14,7 @@ export interface OpenapiSyncOptions {
 
 /** Why the server refused the attach, for a 402 or 403 answer. */
 function skipReason(err: CowlAPIError): string {
-  if (err.status === 402) return "the workspace plan does not include the OpenAPI reference";
+  if (err.status === 402) return "your plan does not include the OpenAPI reference on this server";
   const permission = err.details.permission;
   return `the key lacks ${typeof permission === "string" ? permission : "openapi.attach"}`;
 }

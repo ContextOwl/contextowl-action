@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { ResolvedConfig } from "../src/config.js";
 import { nullLogger } from "../src/logger.js";
 import { runSync } from "../src/sync/index.js";
-import { type SurfaceResult, emptyResult, jobFailure } from "../src/sync/plan.js";
+import { type SurfaceResult, emptyResult, jobFailure, totals } from "../src/sync/plan.js";
 import { FakeCowl, apiError } from "./fake-cowl.js";
 
 function repo(): string {
@@ -44,9 +44,11 @@ describe("runSync", () => {
     const [docs, changelog] = await runSync(cowl, nullLogger, config(), repo());
 
     expect(docs.stopped).toBe(true);
+    expect(docs.failed).toBe(1);
     expect(docs.failures).toEqual(["docs sync stopped: 401 unauthorized: bad key"]);
     expect(changelog.stopped).toBe(false);
     expect(changelog.created).toBe(1);
+    expect(totals([docs, changelog])).toMatchObject({ created: 1, failed: 1 });
     expect(jobFailure([docs, changelog], false)).toBe(
       "Sync stopped for docs. See the job summary.",
     );
