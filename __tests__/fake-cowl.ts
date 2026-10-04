@@ -89,8 +89,21 @@ export function legacyPermissionDenied(operation: string): CowlAPIError {
   });
 }
 
-/** 402 from the plan gate. */
-export function upgradeRequired(operation: string): CowlAPIError {
+/**
+ * 402 from the plan gate of the contract: the message and `details.permission`
+ * name the permission. `details.feature` is mcp_extended, the plan feature of
+ * the workspace.* permissions.
+ */
+export function upgradeRequired(operation: string, permission: string): CowlAPIError {
+  return apiError(operation, 402, {
+    code: "upgrade_required",
+    message: `${permission} needs a paid plan or an active trial`,
+    details: { feature: "mcp_extended", permission },
+  });
+}
+
+/** 402 from the plan gate of servers before the contract. It names no permission. */
+export function legacyUpgradeRequired(operation: string): CowlAPIError {
   return apiError(operation, 402, {
     code: "upgrade_required",
     message: "your plan does not include this endpoint",
@@ -113,7 +126,10 @@ export class FakeCowl implements Cowl {
   private nextId = 1;
   openapiSpec: string | null = null;
   openapiStats: OpenapiStats = { created: 0, updated: 0, deleted: 0 };
-  /** False makes the plan gate refuse the OpenAPI attach with 402. */
+  /**
+   * False makes a legacy server refuse the OpenAPI attach with 402. The plan
+   * gate of the contract does not cover openapi.attach.
+   */
   planIncludesOpenapi = true;
   /** Return the first page for every offset, like a server that ignores offset. */
   ignoreOffset = false;
@@ -471,7 +487,7 @@ export class FakeCowl implements Cowl {
   async attachOpenapi(_ws: string | undefined, spec: string): Promise<OpenapiAttachResult> {
     this.enter("attachOpenapi", "attach openapi");
     if (!this.perms.openapiAttach) throw this.denied("attach OpenAPI", "openapi.attach");
-    if (!this.planIncludesOpenapi) throw upgradeRequired("attach OpenAPI");
+    if (this.legacy && !this.planIncludesOpenapi) throw legacyUpgradeRequired("attach OpenAPI");
     if (!this.legacy && spec === this.openapiSpec) return { stats: null, unchanged: true };
     this.openapiSpec = spec;
     return { stats: { ...this.openapiStats }, unchanged: false };

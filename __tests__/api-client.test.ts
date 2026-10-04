@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { RestClient } from "../src/api/client.js";
 import { CowlAPIError, describeError } from "../src/types.js";
+import { upgradeRequired } from "./fake-cowl.js";
 
 interface RequestCall {
   url: string;
@@ -216,7 +217,12 @@ describe("RestClient", () => {
     const unnamed = new CowlAPIError("op", "this key lacks the required permission", 403);
     expect(unnamed.isPermissionDenied("openapi.attach")).toBe(false);
     expect(unnamed.isPermissionDenied()).toBe(true);
-    expect(new CowlAPIError("op", "plan", 402).isPermissionDenied()).toBe(false);
+  });
+
+  it("does not match a 402, also when the error names the permission", () => {
+    const plan = upgradeRequired("create workspace", "workspace.create");
+    expect(plan.isPermissionDenied()).toBe(false);
+    expect(plan.isPermissionDenied("workspace.create")).toBe(false);
   });
 
   it("uses the status text when the error body is not JSON", async () => {

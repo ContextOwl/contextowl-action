@@ -58,7 +58,7 @@ describe("syncOpenapi", () => {
     }
   });
 
-  it("skips with a warning on 402", async () => {
+  it("skips with a warning when an older server plan-gates the attach with 402", async () => {
     const cowl = new FakeCowl({ legacy: true });
     cowl.planIncludesOpenapi = false;
     const spec = writeSpec("openapi: 3.0.0\n");
