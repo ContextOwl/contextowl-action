@@ -44,6 +44,7 @@ describe("resolveConfig", () => {
     workspace: "",
     prune: false,
     dryRun: false,
+    failOnError: true,
     ...over,
   });
 
@@ -54,6 +55,12 @@ describe("resolveConfig", () => {
 
   it("errors when the file is missing", () => {
     expect(() => resolveConfig(inputs("/no/such/file.yml"))).toThrow(/not found/);
+  });
+
+  it("passes fail-on-error through", () => {
+    const p = write("docs:\n  dir: docs\n");
+    expect(resolveConfig(inputs(p)).failOnError).toBe(true);
+    expect(resolveConfig(inputs(p, { failOnError: false })).failOnError).toBe(false);
   });
 
   it("lets the input override the config workspace and enables prune from either", () => {

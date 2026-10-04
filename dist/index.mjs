@@ -428,18 +428,18 @@ var require_tunnel = __commonJS({
             res.statusCode
           );
           socket.destroy();
-          var error = new Error("tunneling socket could not be established, statusCode=" + res.statusCode);
-          error.code = "ECONNRESET";
-          options2.request.emit("error", error);
+          var error2 = new Error("tunneling socket could not be established, statusCode=" + res.statusCode);
+          error2.code = "ECONNRESET";
+          options2.request.emit("error", error2);
           self.removeSocket(placeholder);
           return;
         }
         if (head.length > 0) {
           debug("got illegal response body from proxy");
           socket.destroy();
-          var error = new Error("got illegal response body from proxy");
-          error.code = "ECONNRESET";
-          options2.request.emit("error", error);
+          var error2 = new Error("got illegal response body from proxy");
+          error2.code = "ECONNRESET";
+          options2.request.emit("error", error2);
           self.removeSocket(placeholder);
           return;
         }
@@ -454,9 +454,9 @@ var require_tunnel = __commonJS({
           cause.message,
           cause.stack
         );
-        var error = new Error("tunneling socket could not be established, cause=" + cause.message);
-        error.code = "ECONNRESET";
-        options2.request.emit("error", error);
+        var error2 = new Error("tunneling socket could not be established, cause=" + cause.message);
+        error2.code = "ECONNRESET";
+        options2.request.emit("error", error2);
         self.removeSocket(placeholder);
       }
     };
@@ -1762,37 +1762,37 @@ var require_diagnostics = __commonJS({
       const debuglog = fetchDebuglog.enabled ? fetchDebuglog : undiciDebugLog;
       diagnosticsChannel.channel("undici:client:beforeConnect").subscribe((evt) => {
         const {
-          connectParams: { version, protocol, port, host }
+          connectParams: { version: version2, protocol, port, host }
         } = evt;
         debuglog(
           "connecting to %s using %s%s",
           `${host}${port ? `:${port}` : ""}`,
           protocol,
-          version
+          version2
         );
       });
       diagnosticsChannel.channel("undici:client:connected").subscribe((evt) => {
         const {
-          connectParams: { version, protocol, port, host }
+          connectParams: { version: version2, protocol, port, host }
         } = evt;
         debuglog(
           "connected to %s using %s%s",
           `${host}${port ? `:${port}` : ""}`,
           protocol,
-          version
+          version2
         );
       });
       diagnosticsChannel.channel("undici:client:connectError").subscribe((evt) => {
         const {
-          connectParams: { version, protocol, port, host },
-          error
+          connectParams: { version: version2, protocol, port, host },
+          error: error2
         } = evt;
         debuglog(
           "connection to %s using %s%s errored - %s",
           `${host}${port ? `:${port}` : ""}`,
           protocol,
-          version,
-          error.message
+          version2,
+          error2.message
         );
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
@@ -1823,14 +1823,14 @@ var require_diagnostics = __commonJS({
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
           request: { method, path, origin },
-          error
+          error: error2
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
           path,
-          error.message
+          error2.message
         );
       });
       isClientSet = true;
@@ -1840,40 +1840,40 @@ var require_diagnostics = __commonJS({
         const debuglog = undiciDebugLog.enabled ? undiciDebugLog : websocketDebuglog;
         diagnosticsChannel.channel("undici:client:beforeConnect").subscribe((evt) => {
           const {
-            connectParams: { version, protocol, port, host }
+            connectParams: { version: version2, protocol, port, host }
           } = evt;
           debuglog(
             "connecting to %s%s using %s%s",
             host,
             port ? `:${port}` : "",
             protocol,
-            version
+            version2
           );
         });
         diagnosticsChannel.channel("undici:client:connected").subscribe((evt) => {
           const {
-            connectParams: { version, protocol, port, host }
+            connectParams: { version: version2, protocol, port, host }
           } = evt;
           debuglog(
             "connected to %s%s using %s%s",
             host,
             port ? `:${port}` : "",
             protocol,
-            version
+            version2
           );
         });
         diagnosticsChannel.channel("undici:client:connectError").subscribe((evt) => {
           const {
-            connectParams: { version, protocol, port, host },
-            error
+            connectParams: { version: version2, protocol, port, host },
+            error: error2
           } = evt;
           debuglog(
             "connection to %s%s using %s%s errored - %s",
             host,
             port ? `:${port}` : "",
             protocol,
-            version,
-            error.message
+            version2,
+            error2.message
           );
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
@@ -2143,16 +2143,16 @@ var require_request = __commonJS({
           this.onError(err);
         }
       }
-      onError(error) {
+      onError(error2) {
         this.onFinally();
         if (channels.error.hasSubscribers) {
-          channels.error.publish({ request: this, error });
+          channels.error.publish({ request: this, error: error2 });
         }
         if (this.aborted) {
           return;
         }
         this.aborted = true;
-        return this[kHandler].onError(error);
+        return this[kHandler].onError(error2);
       }
       onFinally() {
         if (this.errorHandler) {
@@ -5883,7 +5883,7 @@ Content-Type: ${value.type || "application/octet-stream"}\r
       }
       throwIfAborted(object[kState]);
       const promise = createDeferredPromise();
-      const errorSteps = (error) => promise.reject(error);
+      const errorSteps = (error2) => promise.reject(error2);
       const successSteps = (data) => {
         try {
           promise.resolve(convertBytesToJSValue(data));
@@ -7487,8 +7487,8 @@ var require_client_h2 = __commonJS({
         }
         request.onRequestSent();
         client[kResume]();
-      } catch (error) {
-        abort(error);
+      } catch (error2) {
+        abort(error2);
       }
     }
     function writeStream(abort, socket, expectsPayload, h2stream, body, client, request, contentLength) {
@@ -7643,8 +7643,8 @@ var require_redirect_handler = __commonJS({
       onUpgrade(statusCode, headers, socket) {
         this.handler.onUpgrade(statusCode, headers, socket);
       }
-      onError(error) {
-        this.handler.onError(error);
+      onError(error2) {
+        this.handler.onError(error2);
       }
       onHeaders(statusCode, headers, resume, statusText) {
         this.location = this.history.length >= this.maxRedirections || util2.isDisturbed(this.opts.body) ? null : parseLocation(statusCode, headers);
@@ -8573,7 +8573,7 @@ var require_pool = __commonJS({
         this[kOptions] = { ...util2.deepClone(options2), connect, allowH2 };
         this[kOptions].interceptors = options2.interceptors ? { ...options2.interceptors } : void 0;
         this[kFactory] = factory;
-        this.on("connectionError", (origin2, targets, error) => {
+        this.on("connectionError", (origin2, targets, error2) => {
           for (const target of targets) {
             const idx = this[kClients].indexOf(target);
             if (idx !== -1) {
@@ -10940,13 +10940,13 @@ var require_mock_utils = __commonJS({
       if (mockDispatch2.data.callback) {
         mockDispatch2.data = { ...mockDispatch2.data, ...mockDispatch2.data.callback(opts) };
       }
-      const { data: { statusCode, data, headers, trailers, error }, delay, persist } = mockDispatch2;
+      const { data: { statusCode, data, headers, trailers, error: error2 }, delay, persist } = mockDispatch2;
       const { timesInvoked, times } = mockDispatch2;
       mockDispatch2.consumed = !persist && timesInvoked >= times;
       mockDispatch2.pending = timesInvoked < times;
-      if (error !== null) {
+      if (error2 !== null) {
         deleteMockDispatch(this[kDispatches], key);
-        handler.onError(error);
+        handler.onError(error2);
         return true;
       }
       if (typeof delay === "number" && delay > 0) {
@@ -10984,19 +10984,19 @@ var require_mock_utils = __commonJS({
         if (agent.isMockActive) {
           try {
             mockDispatch.call(this, opts, handler);
-          } catch (error) {
-            if (error instanceof MockNotMatchedError) {
+          } catch (error2) {
+            if (error2 instanceof MockNotMatchedError) {
               const netConnect = agent[kGetNetConnect]();
               if (netConnect === false) {
-                throw new MockNotMatchedError(`${error.message}: subsequent request to origin ${origin} was not allowed (net.connect disabled)`);
+                throw new MockNotMatchedError(`${error2.message}: subsequent request to origin ${origin} was not allowed (net.connect disabled)`);
               }
               if (checkNetConnect(netConnect, origin)) {
                 originalDispatch.call(this, opts, handler);
               } else {
-                throw new MockNotMatchedError(`${error.message}: subsequent request to origin ${origin} was not allowed (net.connect is not enabled for this origin)`);
+                throw new MockNotMatchedError(`${error2.message}: subsequent request to origin ${origin} was not allowed (net.connect is not enabled for this origin)`);
               }
             } else {
-              throw error;
+              throw error2;
             }
           }
         } else {
@@ -11161,11 +11161,11 @@ var require_mock_interceptor = __commonJS({
       /**
        * Mock an undici request with a defined error.
        */
-      replyWithError(error) {
-        if (typeof error === "undefined") {
+      replyWithError(error2) {
+        if (typeof error2 === "undefined") {
           throw new InvalidArgumentError("error must be defined");
         }
-        const newMockDispatch = addMockDispatch(this[kDispatches], this[kDispatchKey], { error });
+        const newMockDispatch = addMockDispatch(this[kDispatches], this[kDispatchKey], { error: error2 });
         return new MockScope(newMockDispatch);
       }
       /**
@@ -11328,11 +11328,11 @@ var require_pluralizer = __commonJS({
         this.singular = singular;
         this.plural = plural;
       }
-      pluralize(count) {
-        const one = count === 1;
+      pluralize(count2) {
+        const one = count2 === 1;
         const keys = one ? singulars : plurals;
         const noun = one ? this.singular : this.plural;
-        return { ...keys, count, noun };
+        return { ...keys, count: count2, noun };
       }
     };
   }
@@ -13683,17 +13683,17 @@ var require_fetch = __commonJS({
         this.emit("terminated", reason);
       }
       // https://fetch.spec.whatwg.org/#fetch-controller-abort
-      abort(error) {
+      abort(error2) {
         if (this.state !== "ongoing") {
           return;
         }
         this.state = "aborted";
-        if (!error) {
-          error = new DOMException("The operation was aborted.", "AbortError");
+        if (!error2) {
+          error2 = new DOMException("The operation was aborted.", "AbortError");
         }
-        this.serializedAbortReason = error;
-        this.connection?.destroy(error);
-        this.emit("terminated", error);
+        this.serializedAbortReason = error2;
+        this.connection?.destroy(error2);
+        this.emit("terminated", error2);
       }
     };
     function handleFetchDone(response) {
@@ -13789,12 +13789,12 @@ var require_fetch = __commonJS({
       );
     }
     var markResourceTiming = performance.markResourceTiming;
-    function abortFetch(p, request, responseObject, error) {
+    function abortFetch(p, request, responseObject, error2) {
       if (p) {
-        p.reject(error);
+        p.reject(error2);
       }
       if (request.body != null && isReadable(request.body?.stream)) {
-        request.body.stream.cancel(error).catch((err) => {
+        request.body.stream.cancel(error2).catch((err) => {
           if (err.code === "ERR_INVALID_STATE") {
             return;
           }
@@ -13806,7 +13806,7 @@ var require_fetch = __commonJS({
       }
       const response = responseObject[kState];
       if (response.body != null && isReadable(response.body?.stream)) {
-        response.body.stream.cancel(error).catch((err) => {
+        response.body.stream.cancel(error2).catch((err) => {
           if (err.code === "ERR_INVALID_STATE") {
             return;
           }
@@ -14627,13 +14627,13 @@ var require_fetch = __commonJS({
               fetchParams.controller.ended = true;
               this.body.push(null);
             },
-            onError(error) {
+            onError(error2) {
               if (this.abort) {
                 fetchParams.controller.off("terminated", this.abort);
               }
-              this.body?.destroy(error);
-              fetchParams.controller.terminate(error);
-              reject(error);
+              this.body?.destroy(error2);
+              fetchParams.controller.terminate(error2);
+              reject(error2);
             },
             onUpgrade(status, rawHeaders, socket) {
               if (status !== 101) {
@@ -15096,8 +15096,8 @@ var require_util4 = __commonJS({
                   }
                   fr[kResult] = result;
                   fireAProgressEvent("load", fr);
-                } catch (error) {
-                  fr[kError] = error;
+                } catch (error2) {
+                  fr[kError] = error2;
                   fireAProgressEvent("error", fr);
                 }
                 if (fr[kState] !== "loading") {
@@ -15106,13 +15106,13 @@ var require_util4 = __commonJS({
               });
               break;
             }
-          } catch (error) {
+          } catch (error2) {
             if (fr[kAborted]) {
               return;
             }
             queueMicrotask(() => {
               fr[kState] = "done";
-              fr[kError] = error;
+              fr[kError] = error2;
               fireAProgressEvent("error", fr);
               if (fr[kState] !== "loading") {
                 fireAProgressEvent("loadend", fr);
@@ -17380,11 +17380,11 @@ var require_connection = __commonJS({
         });
       }
     }
-    function onSocketError(error) {
+    function onSocketError(error2) {
       const { ws } = this;
       ws[kReadyState] = states.CLOSING;
       if (channels.socketError.hasSubscribers) {
-        channels.socketError.publish(error);
+        channels.socketError.publish(error2);
       }
       this.destroy();
     }
@@ -17675,10 +17675,10 @@ var require_receiver = __commonJS({
                 this.#extensions.get("permessage-deflate").decompress(
                   body,
                   this.#info.fin,
-                  (error, data) => {
-                    if (error) {
-                      const code = error instanceof MessageSizeExceededError ? 1009 : 1007;
-                      failWebsocketConnectionWithCode(this.ws, code, error.message);
+                  (error2, data) => {
+                    if (error2) {
+                      const code = error2 instanceof MessageSizeExceededError ? 1009 : 1007;
+                      failWebsocketConnectionWithCode(this.ws, code, error2.message);
                       return;
                     }
                     if (!this.writeFragments(data)) {
@@ -18742,8 +18742,8 @@ var require_eventsource = __commonJS({
           pipeline(
             response.body.stream,
             eventSourceStream,
-            (error) => {
-              if (error?.aborted === false) {
+            (error2) => {
+              if (error2?.aborted === false) {
                 this.close();
                 this.dispatchEvent(new Event("error"));
               }
@@ -19801,12 +19801,12 @@ var require_oidc_utils = __commonJS({
         var _a;
         return __awaiter(this, void 0, void 0, function* () {
           const httpclient = _OidcClient.createHttpClient();
-          const res = yield httpclient.getJson(id_token_url).catch((error) => {
+          const res = yield httpclient.getJson(id_token_url).catch((error2) => {
             throw new Error(`Failed to get ID Token. 
  
-        Error Code : ${error.statusCode}
+        Error Code : ${error2.statusCode}
  
-        Error Message: ${error.message}`);
+        Error Message: ${error2.message}`);
           });
           const id_token = (_a = res.result) === null || _a === void 0 ? void 0 : _a.value;
           if (!id_token) {
@@ -19827,8 +19827,8 @@ var require_oidc_utils = __commonJS({
             const id_token = yield _OidcClient.getCall(id_token_url);
             (0, core_1.setSecret)(id_token);
             return id_token;
-          } catch (error) {
-            throw new Error(`Error message: ${error.message}`);
+          } catch (error2) {
+            throw new Error(`Error message: ${error2.message}`);
           }
         });
       }
@@ -20950,7 +20950,7 @@ var require_toolrunner = __commonJS({
               this._debug(`STDIO streams have closed for tool '${this.toolPath}'`);
               state.CheckComplete();
             });
-            state.on("done", (error, exitCode) => {
+            state.on("done", (error2, exitCode) => {
               if (stdbuffer.length > 0) {
                 this.emit("stdline", stdbuffer);
               }
@@ -20958,8 +20958,8 @@ var require_toolrunner = __commonJS({
                 this.emit("errline", errbuffer);
               }
               cp.removeAllListeners();
-              if (error) {
-                reject(error);
+              if (error2) {
+                reject(error2);
               } else {
                 resolve3(exitCode);
               }
@@ -21054,14 +21054,14 @@ var require_toolrunner = __commonJS({
         this.emit("debug", message);
       }
       _setResult() {
-        let error;
+        let error2;
         if (this.processExited) {
           if (this.processError) {
-            error = new Error(`There was an error when attempting to execute the process '${this.toolPath}'. This may indicate the process failed to start. Error: ${this.processError}`);
+            error2 = new Error(`There was an error when attempting to execute the process '${this.toolPath}'. This may indicate the process failed to start. Error: ${this.processError}`);
           } else if (this.processExitCode !== 0 && !this.options.ignoreReturnCode) {
-            error = new Error(`The process '${this.toolPath}' failed with exit code ${this.processExitCode}`);
+            error2 = new Error(`The process '${this.toolPath}' failed with exit code ${this.processExitCode}`);
           } else if (this.processStderr && this.options.failOnStdErr) {
-            error = new Error(`The process '${this.toolPath}' failed because one or more lines were written to the STDERR stream`);
+            error2 = new Error(`The process '${this.toolPath}' failed because one or more lines were written to the STDERR stream`);
           }
         }
         if (this.timeout) {
@@ -21069,7 +21069,7 @@ var require_toolrunner = __commonJS({
           this.timeout = null;
         }
         this.done = true;
-        this.emit("done", error, this.processExitCode);
+        this.emit("done", error2, this.processExitCode);
       }
       static HandleTimeout(state) {
         if (state.done) {
@@ -21258,7 +21258,7 @@ var require_platform = __commonJS({
     var os_1 = __importDefault(__require("os"));
     var exec = __importStar(require_exec());
     var getWindowsInfo = () => __awaiter(void 0, void 0, void 0, function* () {
-      const { stdout: version } = yield exec.getExecOutput('powershell -command "(Get-CimInstance -ClassName Win32_OperatingSystem).Version"', void 0, {
+      const { stdout: version2 } = yield exec.getExecOutput('powershell -command "(Get-CimInstance -ClassName Win32_OperatingSystem).Version"', void 0, {
         silent: true
       });
       const { stdout: name } = yield exec.getExecOutput('powershell -command "(Get-CimInstance -ClassName Win32_OperatingSystem).Caption"', void 0, {
@@ -21266,7 +21266,7 @@ var require_platform = __commonJS({
       });
       return {
         name: name.trim(),
-        version: version.trim()
+        version: version2.trim()
       };
     });
     var getMacOsInfo = () => __awaiter(void 0, void 0, void 0, function* () {
@@ -21274,21 +21274,21 @@ var require_platform = __commonJS({
       const { stdout } = yield exec.getExecOutput("sw_vers", void 0, {
         silent: true
       });
-      const version = (_b = (_a = stdout.match(/ProductVersion:\s*(.+)/)) === null || _a === void 0 ? void 0 : _a[1]) !== null && _b !== void 0 ? _b : "";
+      const version2 = (_b = (_a = stdout.match(/ProductVersion:\s*(.+)/)) === null || _a === void 0 ? void 0 : _a[1]) !== null && _b !== void 0 ? _b : "";
       const name = (_d = (_c = stdout.match(/ProductName:\s*(.+)/)) === null || _c === void 0 ? void 0 : _c[1]) !== null && _d !== void 0 ? _d : "";
       return {
         name,
-        version
+        version: version2
       };
     });
     var getLinuxInfo = () => __awaiter(void 0, void 0, void 0, function* () {
       const { stdout } = yield exec.getExecOutput("lsb_release", ["-i", "-r", "-s"], {
         silent: true
       });
-      const [name, version] = stdout.trim().split("\n");
+      const [name, version2] = stdout.trim().split("\n");
       return {
         name,
-        version
+        version: version2
       };
     });
     exports2.platform = os_1.default.platform();
@@ -21452,7 +21452,7 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
     exports2.setCommandEcho = setCommandEcho;
     function setFailed2(message) {
       process.exitCode = ExitCode.Failure;
-      error(message);
+      error2(message);
     }
     exports2.setFailed = setFailed2;
     function isDebug() {
@@ -21463,10 +21463,10 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
       (0, command_1.issueCommand)("debug", {}, message);
     }
     exports2.debug = debug;
-    function error(message, properties = {}) {
+    function error2(message, properties = {}) {
       (0, command_1.issueCommand)("error", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
-    exports2.error = error;
+    exports2.error = error2;
     function warning2(message, properties = {}) {
       (0, command_1.issueCommand)("warning", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
@@ -21832,13 +21832,13 @@ var require_directives = __commonJS({
               onError(0, "%YAML directive should contain exactly one part");
               return false;
             }
-            const [version] = parts;
-            if (version === "1.1" || version === "1.2") {
-              this.yaml.version = version;
+            const [version2] = parts;
+            if (version2 === "1.1" || version2 === "1.2") {
+              this.yaml.version = version2;
               return true;
             } else {
-              const isValid2 = /^\d+\.\d+$/.test(version);
-              onError(6, `Unsupported YAML version ${version}`, isValid2);
+              const isValid2 = /^\d+\.\d+$/.test(version2);
+              onError(6, `Unsupported YAML version ${version2}`, isValid2);
               return false;
             }
           }
@@ -21877,8 +21877,8 @@ var require_directives = __commonJS({
         if (prefix) {
           try {
             return prefix + decodeURIComponent(suffix);
-          } catch (error) {
-            onError(String(error));
+          } catch (error2) {
+            onError(String(error2));
             return null;
           }
         }
@@ -21980,9 +21980,9 @@ var require_anchors = __commonJS({
             if (typeof ref === "object" && ref.anchor && (identity.isScalar(ref.node) || identity.isCollection(ref.node))) {
               ref.node.anchor = ref.anchor;
             } else {
-              const error = new Error("Failed to resolve repeated object (this should not happen)");
-              error.source = source;
-              throw error;
+              const error2 = new Error("Failed to resolve repeated object (this should not happen)");
+              error2.source = source;
+              throw error2;
             }
           }
         },
@@ -22108,8 +22108,8 @@ var require_Node = __commonJS({
         };
         const res = toJS.toJS(this, "", ctx);
         if (typeof onAnchor === "function")
-          for (const { count, res: res2 } of ctx.anchors.values())
-            onAnchor(res2, count);
+          for (const { count: count2, res: res2 } of ctx.anchors.values())
+            onAnchor(res2, count2);
         return typeof reviver === "function" ? applyReviver.applyReviver(reviver, { "": res }, "", res) : res;
       }
     };
@@ -22215,13 +22215,13 @@ var require_Alias = __commonJS({
         const anchor = anchors2 && source && anchors2.get(source);
         return anchor ? anchor.count * anchor.aliasCount : 0;
       } else if (identity.isCollection(node)) {
-        let count = 0;
+        let count2 = 0;
         for (const item of node.items) {
           const c = getAliasCount(doc, item, anchors2);
-          if (c > count)
-            count = c;
+          if (c > count2)
+            count2 = c;
         }
-        return count;
+        return count2;
       } else if (identity.isPair(node)) {
         const kc = getAliasCount(doc, node.key, anchors2);
         const vc = getAliasCount(doc, node.value, anchors2);
@@ -24938,14 +24938,14 @@ var require_Document = __commonJS({
           version: "1.2"
         }, options2);
         this.options = opt;
-        let { version } = opt;
+        let { version: version2 } = opt;
         if (options2?._directives) {
           this.directives = options2._directives.atDocument();
           if (this.directives.yaml.explicit)
-            version = this.directives.yaml.version;
+            version2 = this.directives.yaml.version;
         } else
-          this.directives = new directives.Directives({ version });
-        this.setSchema(version, options2);
+          this.directives = new directives.Directives({ version: version2 });
+        this.setSchema(version2, options2);
         this.contents = value === void 0 ? null : this.createNode(value, _replacer, options2);
       }
       /**
@@ -25125,11 +25125,11 @@ var require_Document = __commonJS({
        *
        * Overrides all previously set schema options.
        */
-      setSchema(version, options2 = {}) {
-        if (typeof version === "number")
-          version = String(version);
+      setSchema(version2, options2 = {}) {
+        if (typeof version2 === "number")
+          version2 = String(version2);
         let opt;
-        switch (version) {
+        switch (version2) {
           case "1.1":
             if (this.directives)
               this.directives.yaml.version = "1.1";
@@ -25140,9 +25140,9 @@ var require_Document = __commonJS({
           case "1.2":
           case "next":
             if (this.directives)
-              this.directives.yaml.version = version;
+              this.directives.yaml.version = version2;
             else
-              this.directives = new directives.Directives({ version });
+              this.directives = new directives.Directives({ version: version2 });
             opt = { resolveKnownTags: true, schema: "core" };
             break;
           case null:
@@ -25151,7 +25151,7 @@ var require_Document = __commonJS({
             opt = null;
             break;
           default: {
-            const sv = JSON.stringify(version);
+            const sv = JSON.stringify(version2);
             throw new Error(`Expected '1.1', '1.2' or null as first argument, but found: ${sv}`);
           }
         }
@@ -25174,8 +25174,8 @@ var require_Document = __commonJS({
         };
         const res = toJS.toJS(this.contents, jsonArg ?? "", ctx);
         if (typeof onAnchor === "function")
-          for (const { count, res: res2 } of ctx.anchors.values())
-            onAnchor(res2, count);
+          for (const { count: count2, res: res2 } of ctx.anchors.values())
+            onAnchor(res2, count2);
         return typeof reviver === "function" ? applyReviver.applyReviver(reviver, { "": res }, "", res) : res;
       }
       /**
@@ -25230,12 +25230,12 @@ var require_errors2 = __commonJS({
         super("YAMLWarning", pos, code, message);
       }
     };
-    var prettifyError = (src, lc2) => (error) => {
-      if (error.pos[0] === -1)
+    var prettifyError = (src, lc2) => (error2) => {
+      if (error2.pos[0] === -1)
         return;
-      error.linePos = error.pos.map((pos) => lc2.linePos(pos));
-      const { line, col } = error.linePos[0];
-      error.message += ` at line ${line}, column ${col}`;
+      error2.linePos = error2.pos.map((pos) => lc2.linePos(pos));
+      const { line, col } = error2.linePos[0];
+      error2.message += ` at line ${line}, column ${col}`;
       let ci = col - 1;
       let lineStr = src.substring(lc2.lineStarts[line - 1], lc2.lineStarts[line]).replace(/[\n\r]+$/, "");
       if (ci >= 60 && lineStr.length > 80) {
@@ -25252,13 +25252,13 @@ var require_errors2 = __commonJS({
         lineStr = prev + lineStr;
       }
       if (/[^ ]/.test(lineStr)) {
-        let count = 1;
-        const end = error.linePos[1];
+        let count2 = 1;
+        const end = error2.linePos[1];
         if (end?.line === line && end.col > col) {
-          count = Math.max(1, Math.min(end.col - col, 80 - ci));
+          count2 = Math.max(1, Math.min(end.col - col, 80 - ci));
         }
-        const pointer = " ".repeat(ci) + "^".repeat(count);
-        error.message += `:
+        const pointer = " ".repeat(ci) + "^".repeat(count2);
+        error2.message += `:
 
 ${lineStr}
 ${pointer}
@@ -26061,7 +26061,7 @@ var require_resolve_block_scalar = __commonJS({
       const mode = source[0];
       let indent = 0;
       let chomp = "";
-      let error = -1;
+      let error2 = -1;
       for (let i = 1; i < source.length; ++i) {
         const ch = source[i];
         if (!chomp && (ch === "-" || ch === "+"))
@@ -26070,12 +26070,12 @@ var require_resolve_block_scalar = __commonJS({
           const n = Number(ch);
           if (!indent && n)
             indent = n;
-          else if (error === -1)
-            error = offset + i;
+          else if (error2 === -1)
+            error2 = offset + i;
         }
       }
-      if (error !== -1)
-        onError(error, "UNEXPECTED_TOKEN", `Block scalar header includes extra characters: ${source}`);
+      if (error2 !== -1)
+        onError(error2, "UNEXPECTED_TOKEN", `Block scalar header includes extra characters: ${source}`);
       let hasSpace = false;
       let comment = "";
       let length = source.length;
@@ -26370,8 +26370,8 @@ var require_compose_scalar = __commonJS({
       try {
         const res = tag.resolve(value, (msg) => onError(tagToken ?? token, "TAG_RESOLVE_FAILED", msg), ctx.options);
         scalar = identity.isScalar(res) ? res : new Scalar.Scalar(res);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
+      } catch (error2) {
+        const msg = error2 instanceof Error ? error2.message : String(error2);
         onError(tagToken ?? token, "TAG_RESOLVE_FAILED", msg);
         scalar = new Scalar.Scalar(value);
       }
@@ -26494,8 +26494,8 @@ var require_compose_node = __commonJS({
             node = composeCollection.composeCollection(CN, ctx, token, props, onError);
             if (anchor)
               node.anchor = anchor.source.substring(1);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+          } catch (error2) {
+            const message = error2 instanceof Error ? error2.message : String(error2);
             onError(token, "RESOURCE_EXHAUSTION", message);
           }
           break;
@@ -26760,11 +26760,11 @@ ${cb}` : comment;
             break;
           case "error": {
             const msg = token.source ? `${token.message}: ${JSON.stringify(token.source)}` : token.message;
-            const error = new errors.YAMLParseError(getErrorPos(token), "UNEXPECTED_TOKEN", msg);
+            const error2 = new errors.YAMLParseError(getErrorPos(token), "UNEXPECTED_TOKEN", msg);
             if (this.atDirectives || !this.doc)
-              this.errors.push(error);
+              this.errors.push(error2);
             else
-              this.doc.errors.push(error);
+              this.doc.errors.push(error2);
             break;
           }
           case "doc-end": {
@@ -28077,8 +28077,8 @@ var require_parser = __commonJS({
       peek(n) {
         return this.stack[this.stack.length - n];
       }
-      *pop(error) {
-        const token = error ?? this.stack.pop();
+      *pop(error2) {
+        const token = error2 ?? this.stack.pop();
         if (!token) {
           const message = "Tried to pop an empty stack";
           yield { type: "error", offset: this.offset, source: "", message };
@@ -29162,9 +29162,9 @@ var require_common = __commonJS({
       }
       return target;
     }
-    function repeat(string, count) {
+    function repeat(string, count2) {
       var result = "", cycle;
-      for (cycle = 0; cycle < count; cycle += 1) {
+      for (cycle = 0; cycle < count2; cycle += 1) {
         result += string;
       }
       return result;
@@ -30551,11 +30551,11 @@ var require_loader = __commonJS({
       }
       return false;
     }
-    function writeFoldedLines(state, count) {
-      if (count === 1) {
+    function writeFoldedLines(state, count2) {
+      if (count2 === 1) {
         state.result += " ";
-      } else if (count > 1) {
-        state.result += common.repeat("\n", count - 1);
+      } else if (count2 > 1) {
+        state.result += common.repeat("\n", count2 - 1);
       }
     }
     function readPlainScalar(state, nodeIndent, withinFlowCollection) {
@@ -32659,8 +32659,8 @@ var ZodError = class _ZodError extends Error {
       return issue.message;
     };
     const fieldErrors = { _errors: [] };
-    const processError = (error) => {
-      for (const issue of error.issues) {
+    const processError = (error2) => {
+      for (const issue of error2.issues) {
         if (issue.code === "invalid_union") {
           issue.unionErrors.map(processError);
         } else if (issue.code === "invalid_return_type") {
@@ -32723,8 +32723,8 @@ var ZodError = class _ZodError extends Error {
   }
 };
 ZodError.create = (issues) => {
-  const error = new ZodError(issues);
-  return error;
+  const error2 = new ZodError(issues);
+  return error2;
 };
 
 // node_modules/zod/v3/locales/en.js
@@ -32988,8 +32988,8 @@ var handleResult = (ctx, result) => {
       get error() {
         if (this._error)
           return this._error;
-        const error = new ZodError(ctx.common.issues);
-        this._error = error;
+        const error2 = new ZodError(ctx.common.issues);
+        this._error = error2;
         return this._error;
       }
     };
@@ -33341,11 +33341,11 @@ function datetimeRegex(args) {
   regex = `${regex}(${opts.join("|")})`;
   return new RegExp(`^${regex}$`);
 }
-function isValidIP(ip, version) {
-  if ((version === "v4" || !version) && ipv4Regex.test(ip)) {
+function isValidIP(ip, version2) {
+  if ((version2 === "v4" || !version2) && ipv4Regex.test(ip)) {
     return true;
   }
-  if ((version === "v6" || !version) && ipv6Regex.test(ip)) {
+  if ((version2 === "v6" || !version2) && ipv6Regex.test(ip)) {
     return true;
   }
   return false;
@@ -33372,11 +33372,11 @@ function isValidJWT(jwt, alg) {
     return false;
   }
 }
-function isValidCidr(ip, version) {
-  if ((version === "v4" || !version) && ipv4CidrRegex.test(ip)) {
+function isValidCidr(ip, version2) {
+  if ((version2 === "v4" || !version2) && ipv4CidrRegex.test(ip)) {
     return true;
   }
-  if ((version === "v6" || !version) && ipv6CidrRegex.test(ip)) {
+  if ((version2 === "v6" || !version2) && ipv6CidrRegex.test(ip)) {
     return true;
   }
   return false;
@@ -35644,25 +35644,25 @@ var ZodFunction = class _ZodFunction extends ZodType {
       });
       return INVALID;
     }
-    function makeArgsIssue(args, error) {
+    function makeArgsIssue(args, error2) {
       return makeIssue({
         data: args,
         path: ctx.path,
         errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap(), en_default].filter((x) => !!x),
         issueData: {
           code: ZodIssueCode.invalid_arguments,
-          argumentsError: error
+          argumentsError: error2
         }
       });
     }
-    function makeReturnsIssue(returns, error) {
+    function makeReturnsIssue(returns, error2) {
       return makeIssue({
         data: returns,
         path: ctx.path,
         errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap(), en_default].filter((x) => !!x),
         issueData: {
           code: ZodIssueCode.invalid_return_type,
-          returnTypeError: error
+          returnTypeError: error2
         }
       });
     }
@@ -35671,15 +35671,15 @@ var ZodFunction = class _ZodFunction extends ZodType {
     if (this._def.returns instanceof ZodPromise) {
       const me = this;
       return OK(async function(...args) {
-        const error = new ZodError([]);
+        const error2 = new ZodError([]);
         const parsedArgs = await me._def.args.parseAsync(args, params).catch((e) => {
-          error.addIssue(makeArgsIssue(args, e));
-          throw error;
+          error2.addIssue(makeArgsIssue(args, e));
+          throw error2;
         });
         const result = await Reflect.apply(fn, this, parsedArgs);
         const parsedReturns = await me._def.returns._def.type.parseAsync(result, params).catch((e) => {
-          error.addIssue(makeReturnsIssue(result, e));
-          throw error;
+          error2.addIssue(makeReturnsIssue(result, e));
+          throw error2;
         });
         return parsedReturns;
       });
@@ -36449,6 +36449,7 @@ function resolveConfig(inputs) {
     workspace,
     prune: inputs.prune || raw.prune === true,
     dryRun: inputs.dryRun,
+    failOnError: inputs.failOnError,
     docs: raw.docs,
     changelog: raw.changelog,
     openapi: raw.openapi
@@ -36457,19 +36458,32 @@ function resolveConfig(inputs) {
 
 // src/types.ts
 var CowlAPIError = class extends Error {
-  constructor(operation, message, status, code) {
+  constructor(operation, message, status, code, details = {}) {
     super(message);
     this.operation = operation;
     this.status = status;
     this.code = code;
+    this.details = details;
     this.name = "CowlAPIError";
   }
-  /** True when the failure is a permission denial for `capability`. */
-  isPermissionDenied(capability) {
-    if (this.status !== 403 || this.code !== "permission_denied") return false;
-    return capability ? this.message.includes(capability) : true;
+  /**
+   * True when the server answered HTTP 403. With `permission`, the error must
+   * also name it. Newer servers name it in `details.permission`. Older servers
+   * name it only in the message, and only for some checks.
+   */
+  isPermissionDenied(permission) {
+    if (this.status !== 403) return false;
+    if (!permission) return true;
+    const named = this.details.permission;
+    return typeof named === "string" ? named === permission : this.message.includes(permission);
   }
 };
+function describeError(err) {
+  if (err instanceof CowlAPIError && err.status) {
+    return `${err.status}${err.code ? ` ${err.code}` : ""}: ${err.message}`;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
 
 // src/util/json.ts
 function lc(obj) {
@@ -36496,51 +36510,64 @@ function strArray(x) {
   return asArray(x).filter((v) => typeof v === "string");
 }
 
+// package.json
+var version = "1.0.0";
+
+// src/version.ts
+var USER_AGENT = `contextowl-action/${version}`;
+
 // src/api/client.ts
+var MAX_ATTEMPTS = 4;
+var MAX_RETRY_DELAY_MS = 3e4;
 var RestClient = class {
-  constructor(apiUrl, token) {
+  constructor(apiUrl, token, options2 = {}) {
     this.apiUrl = apiUrl;
     this.token = token;
+    this.sleep = options2.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms)));
   }
+  sleep;
   workspacePath(workspace) {
     return `workspaces/${encodeURIComponent(workspace || "-")}`;
   }
   async request(method, path, body) {
-    let response;
-    try {
-      response = await fetch(`${this.apiUrl}/${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          Accept: "application/json",
-          ...body ? { "Content-Type": "application/json" } : {}
-        },
-        ...body ? { body: JSON.stringify(body) } : {}
-      });
-    } catch (err) {
-      throw new CowlAPIError(`${method} ${path}`, `request failed: ${err.message}`);
-    }
+    const operation = `${method} ${path}`;
+    const response = await this.send(operation, `${this.apiUrl}/${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: "application/json",
+        "User-Agent": USER_AGENT,
+        ...body ? { "Content-Type": "application/json" } : {}
+      },
+      ...body ? { body: JSON.stringify(body) } : {}
+    });
     const text = await response.text();
-    let data = null;
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        if (response.ok) {
-          throw new CowlAPIError(`${method} ${path}`, "invalid JSON response", response.status);
-        }
-      }
-    }
     if (!response.ok) {
-      const error = isRec(data) && isRec(data.error) ? lc(data.error) : {};
-      throw new CowlAPIError(
-        `${method} ${path}`,
-        str2(error.message) || response.statusText || `request failed with status ${response.status}`,
-        response.status,
-        str2(error.code)
-      );
+      throw errorFromResponse(operation, response.status, text, response.statusText);
     }
-    return data;
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new CowlAPIError(operation, "invalid JSON response", response.status);
+    }
+  }
+  // The rate limiter answers 429 before the handler runs, so a retry never
+  // repeats a write. A 5xx can come after a write, so only a GET retries it.
+  async send(operation, url, init) {
+    for (let attempt = 1; ; attempt++) {
+      let response;
+      try {
+        response = await fetch(url, init);
+      } catch (err) {
+        throw new CowlAPIError(operation, `request failed: ${err.message}`);
+      }
+      if (attempt >= MAX_ATTEMPTS || !shouldRetry(init.method ?? "GET", response.status)) {
+        return response;
+      }
+      await response.arrayBuffer().catch(() => void 0);
+      await this.sleep(retryDelayMs(response.headers.get("Retry-After"), attempt));
+    }
   }
   async listArticles(workspace) {
     const data = await this.request("GET", `${this.workspacePath(workspace)}/articles`);
@@ -36552,7 +36579,8 @@ var RestClient = class {
         section: str2(r.section),
         nav: str2(r.nav),
         status: str2(r.status),
-        encrypted: bool(r.encrypted)
+        encrypted: bool(r.encrypted),
+        source: str2(r.source)
       };
     });
   }
@@ -36568,17 +36596,25 @@ var RestClient = class {
       title: args.title,
       slug: args.slug,
       section: args.section,
+      section_key: args.sectionKey,
       markdown: args.markdown
     });
-    const slug = isRec(data) ? str2(lc(data).slug) : "";
+    const rec = isRec(data) ? lc(data) : {};
+    const slug = str2(rec.slug);
     if (!slug) throw new CowlAPIError("create article", "no slug returned");
-    return slug;
+    return { slug, nav: str2(rec.nav) };
   }
   async updateArticle(workspace, args) {
     await this.request(
       "PATCH",
       `${this.workspacePath(workspace)}/articles/${encodeURIComponent(args.slug)}`,
-      { title: args.title, section: args.section, markdown: args.markdown, status: args.status }
+      {
+        title: args.title,
+        section: args.section,
+        markdown: args.markdown,
+        status: args.status,
+        allow_shrink: args.allowShrink || void 0
+      }
     );
   }
   async createSection(workspace, label) {
@@ -36596,10 +36632,15 @@ var RestClient = class {
       { section: sectionKey }
     );
   }
-  async listChangelog(workspace, drafts) {
+  async listChangelog(workspace, query) {
+    const params = new URLSearchParams();
+    if (query.drafts) params.set("drafts", "true");
+    if (query.limit !== void 0) params.set("limit", String(query.limit));
+    if (query.offset !== void 0) params.set("offset", String(query.offset));
+    const search = params.toString();
     const data = await this.request(
       "GET",
-      `${this.workspacePath(workspace)}/changelog?drafts=${drafts}`
+      `${this.workspacePath(workspace)}/changelog${search ? `?${search}` : ""}`
     );
     return asArray(data).filter(isRec).map((row) => {
       const r = lc(row);
@@ -36639,9 +36680,34 @@ var RestClient = class {
     const data = await this.request("PUT", `${this.workspacePath(workspace)}/openapi`, {
       spec
     });
-    return statsOf(data);
+    return { stats: statsOf(data), unchanged: isRec(data) && lc(data).unchanged === true };
   }
 };
+function errorFromResponse(operation, status, text, statusText = "") {
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  const error2 = isRec(data) && isRec(data.error) ? lc(data.error) : {};
+  return new CowlAPIError(
+    operation,
+    str2(error2.message) || statusText || `request failed with status ${status}`,
+    status,
+    str2(error2.code) || void 0,
+    isRec(error2.details) ? error2.details : {}
+  );
+}
+function shouldRetry(method, status) {
+  if (status === 429) return true;
+  return method === "GET" && (status === 502 || status === 503 || status === 504);
+}
+function retryDelayMs(retryAfter, attempt) {
+  const seconds = retryAfter !== null && /^\d+$/.test(retryAfter.trim()) ? Number(retryAfter) : NaN;
+  const ms = Number.isNaN(seconds) ? 1e3 * 2 ** (attempt - 1) : seconds * 1e3;
+  return Math.min(ms, MAX_RETRY_DELAY_MS);
+}
 function statsOf(data) {
   const rec = isRec(data) ? lc(data) : null;
   if (!rec) return null;
@@ -36660,12 +36726,20 @@ function statsOf(data) {
 import { existsSync as existsSync4 } from "node:fs";
 import { resolve } from "node:path";
 
-// src/sync/docs.ts
-import { existsSync, readFileSync as readFileSync2, statSync as statSync2 } from "node:fs";
-
 // src/sync/plan.ts
 function emptyResult(surface) {
-  return { surface, created: 0, updated: 0, deleted: 0, skipped: 0, warnings: [], lines: [] };
+  return {
+    surface,
+    created: 0,
+    updated: 0,
+    deleted: 0,
+    skipped: 0,
+    failed: 0,
+    warnings: [],
+    failures: [],
+    stopped: false,
+    lines: []
+  };
 }
 function totals(results) {
   return results.reduce(
@@ -36673,11 +36747,29 @@ function totals(results) {
       created: acc.created + r.created,
       updated: acc.updated + r.updated,
       deleted: acc.deleted + r.deleted,
-      skipped: acc.skipped + r.skipped
+      skipped: acc.skipped + r.skipped,
+      failed: acc.failed + r.failed
     }),
-    { created: 0, updated: 0, deleted: 0, skipped: 0 }
+    { created: 0, updated: 0, deleted: 0, skipped: 0, failed: 0 }
   );
 }
+function count(n, noun) {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+function jobFailure(results, failOnError) {
+  const stopped = results.filter((r) => r.stopped).map((r) => r.surface);
+  if (stopped.length > 0) {
+    return `Sync stopped for ${stopped.join(", ")}. See the job summary.`;
+  }
+  const { failed } = totals(results);
+  if (failed > 0 && failOnError) {
+    return `${count(failed, "item")} failed to sync. See the job summary.`;
+  }
+  return void 0;
+}
+
+// src/sync/docs.ts
+import { existsSync, readFileSync as readFileSync2, statSync as statSync2 } from "node:fs";
 
 // src/util/walk.ts
 import { readdirSync, statSync } from "node:fs";
@@ -36736,13 +36828,13 @@ function parseArticle(file, raw) {
   const title = typeof data.title === "string" && data.title.trim() || firstHeading(body) || titleFromFilename(file.rel);
   const section = typeof data.section === "string" && data.section.trim() || sectionFromDir(file.rel);
   const slug = typeof data.slug === "string" && data.slug.trim() ? data.slug.trim() : void 0;
-  const version = typeof data.version === "string" && data.version.trim() ? data.version.trim() : void 0;
+  const version2 = typeof data.version === "string" && data.version.trim() ? data.version.trim() : void 0;
   return {
     slug,
     title,
     section,
     status: normalizeStatus(data.status, file.rel),
-    version,
+    version: version2,
     markdown: body,
     sourceRel: file.rel
   };
@@ -36765,10 +36857,26 @@ async function mapLimit(items, limit, fn) {
 
 // src/sync/docs.ts
 var READ_CONCURRENCY = 5;
+function isPlaced(nav) {
+  return nav !== "" && nav !== "none";
+}
+function isGeneratedPageError(err) {
+  return err instanceof CowlAPIError && err.code === "openapi_generated";
+}
+function removalText(err) {
+  const removed = num(err.details.removed, -1);
+  const current = num(err.details.currentLength, -1);
+  return removed >= 0 && current > 0 ? `the new body removes ${removed} of ${current} characters` : "the new body removes most of the current text";
+}
 async function syncDocs(cowl, logger2, opts) {
   const result = emptyResult("docs");
   const warn = (m) => {
     result.warnings.push(m);
+    logger2.warning(`docs: ${m}`);
+  };
+  const fail = (m) => {
+    result.failed++;
+    result.failures.push(m);
     logger2.warning(`docs: ${m}`);
   };
   if (!existsSync(opts.dir) || !statSync2(opts.dir).isDirectory()) {
@@ -36788,16 +36896,18 @@ async function syncDocs(cowl, logger2, opts) {
       seenTitles.set(key, d.sourceRel);
     }
   }
-  const remote = (await cowl.listArticles(opts.workspace)).filter((a) => !a.encrypted);
+  const listed = await cowl.listArticles(opts.workspace);
+  const sectionKeys = /* @__PURE__ */ new Map();
+  for (const a of listed) {
+    const label = a.section.toLowerCase();
+    if (label && isPlaced(a.nav) && !sectionKeys.has(label)) sectionKeys.set(label, a.nav);
+  }
+  const remote = listed.filter((a) => !a.encrypted);
   const bySlug = new Map(remote.map((a) => [a.slug, a]));
   const byTitle = /* @__PURE__ */ new Map();
   for (const a of remote) {
     const key = a.title.toLowerCase();
     if (!byTitle.has(key)) byTitle.set(key, a);
-  }
-  const sectionKeys = /* @__PURE__ */ new Map();
-  for (const a of remote) {
-    if (a.section && a.nav) sectionKeys.set(a.section.toLowerCase(), a.nav);
   }
   const claimed = /* @__PURE__ */ new Set();
   const matchOf = (d) => {
@@ -36808,11 +36918,15 @@ async function syncDocs(cowl, logger2, opts) {
   const candidates = [];
   for (const d of desired) {
     const m = matchOf(d);
-    if (m) {
-      claimed.add(m.slug);
-      candidates.push({ d, remote: m });
-    } else {
+    if (!m) {
       creates.push(d);
+      continue;
+    }
+    claimed.add(m.slug);
+    if (m.source === "openapi") {
+      warn(`skipped OpenAPI-generated page "${m.title}"`);
+    } else {
+      candidates.push({ d, remote: m });
     }
   }
   const bodies = await mapLimit(candidates, READ_CONCURRENCY, async (c) => {
@@ -36844,6 +36958,31 @@ async function syncDocs(cowl, logger2, opts) {
     sectionKeys.set(label.toLowerCase(), key);
     return key;
   };
+  let sectionKeyRejected = false;
+  const createArticle = async (d, sectionKey) => {
+    const args = { title: d.title, slug: d.slug, section: d.section, markdown: d.markdown };
+    if (!sectionKey || sectionKeyRejected) return cowl.createArticle(opts.workspace, args);
+    try {
+      return await cowl.createArticle(opts.workspace, { ...args, sectionKey });
+    } catch (err) {
+      if (!(err instanceof CowlAPIError && err.status === 400 && err.code === "invalid_body")) {
+        throw err;
+      }
+      const created = await cowl.createArticle(opts.workspace, args);
+      sectionKeyRejected = true;
+      return created;
+    }
+  };
+  const patchArticle = async (d, patch) => {
+    try {
+      await cowl.updateArticle(opts.workspace, patch);
+    } catch (err) {
+      if (!(err instanceof CowlAPIError) || err.code !== "large_removal") throw err;
+      if (patch.markdown === void 0) throw err;
+      warn(`"${d.title}": ${removalText(err)}. The action sends it with allow_shrink.`);
+      await cowl.updateArticle(opts.workspace, { ...patch, allowShrink: true });
+    }
+  };
   for (const d of creates) {
     if (opts.dryRun) {
       result.lines.push(`create "${d.title}" in ${d.section} (${d.sourceRel})`);
@@ -36851,27 +36990,23 @@ async function syncDocs(cowl, logger2, opts) {
       continue;
     }
     try {
-      const slug = await cowl.createArticle(opts.workspace, {
-        title: d.title,
-        slug: d.slug,
-        section: d.section,
-        markdown: d.markdown
-      });
-      const key = await ensureSectionKey(d.section);
-      await cowl.placeArticle(opts.workspace, slug, key);
-      if (d.status && d.status !== "DRAFT") await setStatus(slug, d.status);
+      const known = sectionKeys.get(d.section.toLowerCase());
+      const created = await createArticle(d, known);
+      if (!known || created.nav !== known) {
+        const key = known ?? await ensureSectionKey(d.section);
+        await cowl.placeArticle(opts.workspace, created.slug, key);
+      }
+      if (d.status && d.status !== "DRAFT") await setStatus(created.slug, d.status);
       result.lines.push(`created "${d.title}" in ${d.section}`);
       result.created++;
     } catch (err) {
-      warn(`create "${d.title}" failed: ${err.message}`);
+      fail(`create "${d.title}" failed: ${describeError(err)}`);
     }
   }
   for (let i = 0; i < candidates.length; i++) {
     const { d, remote: r } = candidates[i];
     const body = bodies[i];
-    const patch = {
-      slug: r.slug
-    };
+    const patch = { slug: r.slug };
     const reasons = [];
     if (body === null || body.trim() !== d.markdown.trim()) {
       patch.markdown = d.markdown;
@@ -36886,13 +37021,18 @@ async function syncDocs(cowl, logger2, opts) {
       patch.section = d.section;
       reasons.push("section");
     }
+    const needsPlacement = sectionChanged || !isPlaced(r.nav);
     const statusChanged = !!d.status && d.status !== r.status;
-    if (reasons.length === 0 && !statusChanged) {
+    if (reasons.length === 0 && !needsPlacement && !statusChanged) {
       result.skipped++;
       continue;
     }
     if (opts.dryRun) {
-      const all = [...reasons, ...statusChanged ? ["status"] : []];
+      const all = [
+        ...reasons,
+        ...needsPlacement && !sectionChanged ? ["placement"] : [],
+        ...statusChanged ? ["status"] : []
+      ];
       result.lines.push(`update "${d.title}" (${all.join(", ")})`);
       result.updated++;
       continue;
@@ -36900,24 +37040,25 @@ async function syncDocs(cowl, logger2, opts) {
     try {
       if (reasons.length > 0) {
         if (d.version) patch.version = d.version;
-        await cowl.updateArticle(opts.workspace, patch);
-        if (sectionChanged) {
-          const key = await ensureSectionKey(d.section);
-          await cowl.placeArticle(opts.workspace, r.slug, key);
-        }
+        await patchArticle(d, patch);
+      }
+      if (needsPlacement) {
+        await cowl.placeArticle(opts.workspace, r.slug, await ensureSectionKey(d.section));
       }
       if (statusChanged && d.status) await setStatus(r.slug, d.status);
       result.lines.push(`updated "${d.title}"`);
       result.updated++;
     } catch (err) {
-      if (err instanceof CowlAPIError && /openapi/i.test(err.message)) {
+      if (isGeneratedPageError(err)) {
         warn(`skipped OpenAPI-generated page "${r.title}"`);
       } else {
-        warn(`update "${d.title}" failed: ${err.message}`);
+        fail(`update "${d.title}" failed: ${describeError(err)}`);
       }
     }
   }
-  const orphans = remote.filter((a) => !claimed.has(a.slug) && a.status !== "DEPRECATED");
+  const orphans = remote.filter(
+    (a) => !claimed.has(a.slug) && a.status !== "DEPRECATED" && a.source !== "openapi"
+  );
   if (orphans.length > 0 && !opts.prune) {
     logger2.info(`docs: ${orphans.length} article(s) not in repo (enable prune to deprecate)`);
   }
@@ -36929,16 +37070,17 @@ async function syncDocs(cowl, logger2, opts) {
         continue;
       }
       if (publishDenied) break;
-      const ok = await setStatus(a.slug, "DEPRECATED").catch((err) => {
-        if (err instanceof CowlAPIError && /openapi/i.test(err.message)) {
-          warn(`skipped OpenAPI-generated page "${a.title}" during prune`);
-          return false;
+      try {
+        if (await setStatus(a.slug, "DEPRECATED")) {
+          result.lines.push(`deprecated "${a.title}"`);
+          result.deleted++;
         }
-        throw err;
-      });
-      if (ok) {
-        result.lines.push(`deprecated "${a.title}"`);
-        result.deleted++;
+      } catch (err) {
+        if (isGeneratedPageError(err)) {
+          warn(`skipped OpenAPI-generated page "${a.title}" during prune`);
+        } else {
+          fail(`deprecate "${a.title}" failed: ${describeError(err)}`);
+        }
       }
     }
   }
@@ -36949,8 +37091,30 @@ async function syncDocs(cowl, logger2, opts) {
 import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
 
 // src/util/changelog.ts
+var SECTION_TAGS = /* @__PURE__ */ new Map([
+  ["added", "new"],
+  ["new", "new"],
+  ["feature", "new"],
+  ["features", "new"],
+  ["changed", "improved"],
+  ["improved", "improved"],
+  ["improvement", "improved"],
+  ["improvements", "improved"],
+  ["fixed", "fixed"],
+  ["fix", "fixed"],
+  ["fixes", "fixed"],
+  ["bugfix", "fixed"],
+  ["deprecated", "deprecated"],
+  ["deprecation", "deprecated"],
+  ["removed", "deprecated"],
+  ["security", "security"]
+]);
+function tagForSection(name) {
+  return SECTION_TAGS.get(name.trim().toLowerCase());
+}
 var HEADING = /^##\s+(.+?)\s*$/;
 var SUBHEADING = /^###\s+(.+?)\s*$/;
+var FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 function parseHeading(text) {
   const bracket = text.match(/^\[([^\]]+)\](?:\s*-\s*(.+))?$/);
   if (bracket) return { version: bracket[1].trim(), date: bracket[2]?.trim() };
@@ -36974,29 +37138,45 @@ function parseChangelog(text) {
         version: current.version,
         publishedAt: toRfc3339(current.date),
         markdown: current.body.join("\n").trim(),
-        tags: current.tags
+        tags: current.tags,
+        unmapped: current.unmapped
       });
     }
     current = null;
   };
+  let fence = "";
   for (const line of lines) {
-    const h = line.match(HEADING);
-    if (h) {
-      flush();
-      const { version, date } = parseHeading(h[1]);
-      current = { version, date, body: [], tags: [] };
-      continue;
+    const marker = line.match(FENCE)?.[1];
+    if (fence) {
+      const closes = marker?.[0] === fence[0] && marker.length >= fence.length;
+      if (closes && line.trim() === marker) fence = "";
+    } else if (marker) {
+      fence = marker;
+    } else {
+      const h = line.match(HEADING);
+      if (h) {
+        flush();
+        const { version: version2, date } = parseHeading(h[1]);
+        current = { version: version2, date, body: [], tags: [], unmapped: [] };
+        continue;
+      }
+      const sub = current ? line.match(SUBHEADING) : null;
+      if (current && sub) {
+        const name = sub[1].trim();
+        const tag = tagForSection(name);
+        if (!tag) current.unmapped.push(name);
+        else if (!current.tags.includes(tag)) current.tags.push(tag);
+      }
     }
-    if (!current) continue;
-    const sub = line.match(SUBHEADING);
-    if (sub) current.tags.push(sub[1].trim());
-    current.body.push(line);
+    current?.body.push(line);
   }
   flush();
   return entries;
 }
 
 // src/sync/changelog.ts
+var CHANGELOG_PAGE_SIZE = 100;
+var SECTION_NAMES = "Added, Changed, Deprecated, Removed, Fixed and Security";
 function tagsEqual(a, b) {
   if (a.length !== b.length) return false;
   const sa = [...a].sort();
@@ -37008,19 +37188,84 @@ function sameInstant(a, b) {
   if (!b) return false;
   return new Date(a).getTime() === new Date(b).getTime();
 }
+function firstFew(items) {
+  const shown = items.slice(0, 3).join(", ");
+  return items.length > 3 ? `${shown} and ${items.length - 3} more` : shown;
+}
+async function listAllChangelog(cowl, workspace, drafts) {
+  const entries = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (let offset = 0; ; ) {
+    const page = await cowl.listChangelog(workspace, {
+      drafts,
+      limit: CHANGELOG_PAGE_SIZE,
+      offset
+    });
+    const fresh = page.filter((e) => !seen.has(e.id));
+    for (const e of fresh) {
+      seen.add(e.id);
+      entries.push(e);
+    }
+    if (page.length < CHANGELOG_PAGE_SIZE) return entries;
+    if (fresh.length === 0) {
+      throw new Error(
+        `the changelog list at offset ${offset} repeats entries that the action already has. The server does not support offset paging.`
+      );
+    }
+    offset += page.length;
+  }
+}
 async function syncChangelog(cowl, logger2, opts) {
   const result = emptyResult("changelog");
   const warn = (m) => {
     result.warnings.push(m);
     logger2.warning(`changelog: ${m}`);
   };
+  const fail = (m) => {
+    result.failed++;
+    result.failures.push(m);
+    logger2.warning(`changelog: ${m}`);
+  };
   if (!existsSync2(opts.file)) throw new Error(`changelog.file not found: ${opts.file}`);
-  const desired = parseChangelog(readFileSync3(opts.file, "utf8"));
-  if (desired.length === 0) {
+  const parsed = parseChangelog(readFileSync3(opts.file, "utf8"));
+  if (parsed.length === 0) {
     warn(`no versioned entries in ${opts.file}`);
     return result;
   }
-  const remote = await cowl.listChangelog(opts.workspace, true);
+  const desired = [];
+  const versions = /* @__PURE__ */ new Set();
+  for (const d of parsed) {
+    const key = d.version.toLowerCase();
+    if (versions.has(key)) {
+      warn(`version "${d.version}" appears more than once. The action syncs the first one.`);
+      continue;
+    }
+    versions.add(key);
+    desired.push(d);
+  }
+  const unmapped = /* @__PURE__ */ new Map();
+  for (const d of desired) {
+    for (const name of d.unmapped) {
+      const group = unmapped.get(name.toLowerCase()) ?? { name, versions: [] };
+      group.versions.push(d.version);
+      unmapped.set(name.toLowerCase(), group);
+    }
+  }
+  for (const { name, versions: where } of unmapped.values()) {
+    warn(
+      `"### ${name}" maps to no tag, so the action sends no tag for it in ${firstFew(where)}. Tags come from ${SECTION_NAMES}.`
+    );
+  }
+  let remote;
+  try {
+    remote = await listAllChangelog(cowl, opts.workspace, true);
+  } catch (err) {
+    if (!(err instanceof CowlAPIError && err.isPermissionDenied())) throw err;
+    remote = await listAllChangelog(cowl, opts.workspace, false);
+    warn(
+      "the key cannot list drafts, so the action matches only published entries. Unpublished versions can get duplicates. Add changelog.update to the key."
+    );
+  }
   const byTitle = /* @__PURE__ */ new Map();
   for (const e of remote) {
     const key = e.title.toLowerCase();
@@ -37114,7 +37359,7 @@ async function syncChangelog(cowl, logger2, opts) {
         await create(d);
       }
     } catch (err) {
-      warn(`entry "${d.version}" failed: ${err.message}`);
+      fail(`entry "${d.version}" failed: ${describeError(err)}`);
     }
   }
   const orphans = remote.filter((e) => !claimed.has(e.id));
@@ -37135,11 +37380,13 @@ async function syncChangelog(cowl, logger2, opts) {
         result.lines.push(`deleted "${e.title}"`);
         result.deleted++;
       } catch (err) {
-        if (err instanceof CowlAPIError && err.isPermissionDenied("changelog.delete")) {
+        if (err instanceof CowlAPIError && err.isPermissionDenied()) {
           deleteDenied = true;
-          warn("token lacks changelog.delete; skipping prune");
+          warn(
+            `prune stopped because the key lacks changelog.delete. Server error: ${describeError(err)}`
+          );
         } else {
-          warn(`delete "${e.title}" failed: ${err.message}`);
+          fail(`delete "${e.title}" failed: ${describeError(err)}`);
         }
       }
     }
@@ -37149,6 +37396,11 @@ async function syncChangelog(cowl, logger2, opts) {
 
 // src/sync/openapi.ts
 import { existsSync as existsSync3, readFileSync as readFileSync4, statSync as statSync3 } from "node:fs";
+function skipReason(err) {
+  if (err.status === 402) return "the workspace plan does not include the OpenAPI reference";
+  const permission = err.details.permission;
+  return `the key lacks ${typeof permission === "string" ? permission : "openapi.attach"}`;
+}
 async function syncOpenapi(cowl, logger2, opts) {
   const result = emptyResult("openapi");
   if (!existsSync3(opts.spec)) throw new Error(`openapi.spec not found: ${opts.spec}`);
@@ -37158,8 +37410,11 @@ async function syncOpenapi(cowl, logger2, opts) {
     return result;
   }
   try {
-    const stats = await cowl.attachOpenapi(opts.workspace, spec);
-    if (stats) {
+    const { stats, unchanged } = await cowl.attachOpenapi(opts.workspace, spec);
+    if (unchanged) {
+      result.skipped++;
+      result.lines.push("OpenAPI spec unchanged: kept the generated pages");
+    } else if (stats) {
       result.created = stats.created;
       result.updated = stats.updated;
       result.deleted = stats.deleted;
@@ -37170,17 +37425,36 @@ async function syncOpenapi(cowl, logger2, opts) {
       result.lines.push("attached OpenAPI spec");
     }
   } catch (err) {
-    if (err instanceof CowlAPIError && err.isPermissionDenied("openapi.attach")) {
-      result.warnings.push("token lacks openapi.attach; skipping OpenAPI sync");
-      logger2.warning("openapi: token lacks openapi.attach; skipping");
+    if (err instanceof CowlAPIError && (err.status === 402 || err.status === 403)) {
+      const message = `skipped the OpenAPI step because ${skipReason(err)}. Server error: ${describeError(err)}`;
+      result.warnings.push(message);
+      logger2.warning(`openapi: ${message}`);
     } else {
-      throw err;
+      const message = `attach OpenAPI spec failed: ${describeError(err)}`;
+      result.failed++;
+      result.failures.push(message);
+      logger2.warning(`openapi: ${message}`);
     }
   }
   return result;
 }
 
 // src/sync/index.ts
+async function runSurface(logger2, surface, group, sync) {
+  logger2.startGroup(group);
+  let r;
+  try {
+    r = await sync();
+  } catch (err) {
+    r = emptyResult(surface);
+    r.stopped = true;
+    r.failures.push(`${surface} sync stopped: ${describeError(err)}`);
+    logger2.error(`${surface}: sync stopped: ${describeError(err)}`);
+  }
+  r.lines.forEach((l) => logger2.info(l));
+  logger2.endGroup();
+  return r;
+}
 async function runSync(cowl, logger2, cfg, root) {
   const docsDir = cfg.docs ? resolve(root, cfg.docs.dir) : void 0;
   const changelogFile = cfg.changelog ? resolve(root, cfg.changelog.file) : void 0;
@@ -37200,39 +37474,48 @@ async function runSync(cowl, logger2, cfg, root) {
   }
   const results = [];
   if (docsDir) {
-    logger2.startGroup("Docs");
-    const r = await syncDocs(cowl, logger2, {
-      dir: docsDir,
-      workspace: cfg.workspace,
-      prune: cfg.prune,
-      dryRun: cfg.dryRun
-    });
-    r.lines.forEach((l) => logger2.info(l));
-    logger2.endGroup();
-    results.push(r);
+    results.push(
+      await runSurface(
+        logger2,
+        "docs",
+        "Docs",
+        () => syncDocs(cowl, logger2, {
+          dir: docsDir,
+          workspace: cfg.workspace,
+          prune: cfg.prune,
+          dryRun: cfg.dryRun
+        })
+      )
+    );
   }
   if (changelogFile) {
-    logger2.startGroup("Changelog");
-    const r = await syncChangelog(cowl, logger2, {
-      file: changelogFile,
-      workspace: cfg.workspace,
-      prune: cfg.prune,
-      dryRun: cfg.dryRun
-    });
-    r.lines.forEach((l) => logger2.info(l));
-    logger2.endGroup();
-    results.push(r);
+    results.push(
+      await runSurface(
+        logger2,
+        "changelog",
+        "Changelog",
+        () => syncChangelog(cowl, logger2, {
+          file: changelogFile,
+          workspace: cfg.workspace,
+          prune: cfg.prune,
+          dryRun: cfg.dryRun
+        })
+      )
+    );
   }
   if (openapiSpec) {
-    logger2.startGroup("OpenAPI");
-    const r = await syncOpenapi(cowl, logger2, {
-      spec: openapiSpec,
-      workspace: cfg.workspace,
-      dryRun: cfg.dryRun
-    });
-    r.lines.forEach((l) => logger2.info(l));
-    logger2.endGroup();
-    results.push(r);
+    results.push(
+      await runSurface(
+        logger2,
+        "openapi",
+        "OpenAPI",
+        () => syncOpenapi(cowl, logger2, {
+          spec: openapiSpec,
+          workspace: cfg.workspace,
+          dryRun: cfg.dryRun
+        })
+      )
+    );
   }
   return results;
 }
@@ -37241,6 +37524,7 @@ async function runSync(cowl, logger2, cfg, root) {
 var logger = {
   info: (m) => core.info(m),
   warning: (m) => core.warning(m),
+  error: (m) => core.error(m),
   startGroup: (n) => core.startGroup(n),
   endGroup: () => core.endGroup()
 };
@@ -37254,7 +37538,8 @@ async function run() {
     configPath: resolve2(root, core.getInput("config") || ".contextowl.yml"),
     workspace: core.getInput("workspace"),
     prune: core.getBooleanInput("prune"),
-    dryRun: core.getBooleanInput("dry-run")
+    dryRun: core.getBooleanInput("dry-run"),
+    failOnError: core.getBooleanInput("fail-on-error")
   };
   const cfg = resolveConfig(inputs);
   core.info(`ContextOwl API: ${cfg.apiUrl}`);
@@ -37265,12 +37550,21 @@ async function run() {
   core.setOutput("updated", t.updated);
   core.setOutput("deleted", t.deleted);
   core.setOutput("skipped", t.skipped);
+  core.setOutput("failed", t.failed);
   const warnings = results.flatMap((r) => r.warnings);
   await writeSummary(results, cfg.dryRun);
   const verb = cfg.dryRun ? "Planned" : "Applied";
   core.info(
-    `${verb}: ${t.created} created, ${t.updated} updated, ${t.deleted} removed, ${t.skipped} unchanged` + (warnings.length ? `, ${warnings.length} warning(s)` : "")
+    `${verb}: ${t.created} created, ${t.updated} updated, ${t.deleted} removed, ${t.skipped} unchanged, ${t.failed} failed` + (warnings.length ? `, ${count(warnings.length, "warning")}` : "")
   );
+  const failure = jobFailure(results, cfg.failOnError);
+  if (failure) {
+    core.setFailed(failure);
+  } else if (t.failed > 0) {
+    core.warning(
+      `${count(t.failed, "item")} failed to sync. The job passes because fail-on-error is false.`
+    );
+  }
 }
 async function writeSummary(results, dryRun) {
   if (!process.env.GITHUB_STEP_SUMMARY) return;
@@ -37281,17 +37575,30 @@ async function writeSummary(results, dryRun) {
       { data: "Created", header: true },
       { data: "Updated", header: true },
       { data: "Removed", header: true },
-      { data: "Unchanged", header: true }
+      { data: "Unchanged", header: true },
+      { data: "Failed", header: true }
     ],
     ...results.map((r) => [
-      r.surface,
+      r.stopped ? `${r.surface} (stopped)` : r.surface,
       String(r.created),
       String(r.updated),
       String(r.deleted),
-      String(r.skipped)
+      String(r.skipped),
+      String(r.failed)
     ]),
-    ["total", String(t.created), String(t.updated), String(t.deleted), String(t.skipped)]
+    [
+      "total",
+      String(t.created),
+      String(t.updated),
+      String(t.deleted),
+      String(t.skipped),
+      String(t.failed)
+    ]
   ]);
+  const failures = results.flatMap((r) => r.failures);
+  if (failures.length) {
+    core.summary.addHeading("Failures", 3).addList(failures);
+  }
   const warnings = results.flatMap((r) => r.warnings);
   if (warnings.length) {
     core.summary.addHeading("Warnings", 3).addList(warnings);

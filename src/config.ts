@@ -32,6 +32,7 @@ export interface ActionInputs {
   workspace: string;
   prune: boolean;
   dryRun: boolean;
+  failOnError: boolean;
 }
 
 /** Fully resolved settings the sync engine runs against. */
@@ -41,6 +42,7 @@ export interface ResolvedConfig {
   workspace: string | undefined;
   prune: boolean;
   dryRun: boolean;
+  failOnError: boolean;
   docs?: { dir: string };
   changelog?: { file: string };
   openapi?: { spec: string };
@@ -96,6 +98,7 @@ export function resolveConfig(inputs: ActionInputs): ResolvedConfig {
     workspace,
     prune: inputs.prune || raw.prune === true,
     dryRun: inputs.dryRun,
+    failOnError: inputs.failOnError,
     docs: raw.docs,
     changelog: raw.changelog,
     openapi: raw.openapi,

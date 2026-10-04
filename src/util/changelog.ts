@@ -2,7 +2,8 @@
 //
 // Each `## [version] - date` (or `## version`) heading starts an entry. The
 // body runs until the next `##` heading. `### Added` / `### Changed` etc.
-// subsection names become tags. An `[Unreleased]` section is skipped.
+// subsection names map to ContextOwl changelog tags. An `[Unreleased]` section
+// is skipped. Headings inside fenced code blocks are body text.
 
 export interface ParsedChangelogEntry {
   /** Version string used as the entry title, e.g. "1.4.0". */
@@ -10,11 +11,41 @@ export interface ParsedChangelogEntry {
   /** RFC3339 timestamp derived from the heading date, if present. */
   publishedAt?: string;
   markdown: string;
+  /** Tags mapped from the `###` subsection names, without duplicates. */
   tags: string[];
+  /** `###` subsection names that map to no tag. */
+  unmapped: string[];
+}
+
+// Lowercase subsection name to tag: the Keep a Changelog names, the tags
+// themselves, and the aliases the server accepts.
+const SECTION_TAGS = new Map<string, string>([
+  ["added", "new"],
+  ["new", "new"],
+  ["feature", "new"],
+  ["features", "new"],
+  ["changed", "improved"],
+  ["improved", "improved"],
+  ["improvement", "improved"],
+  ["improvements", "improved"],
+  ["fixed", "fixed"],
+  ["fix", "fixed"],
+  ["fixes", "fixed"],
+  ["bugfix", "fixed"],
+  ["deprecated", "deprecated"],
+  ["deprecation", "deprecated"],
+  ["removed", "deprecated"],
+  ["security", "security"],
+]);
+
+/** The tag for a `###` subsection name, case-insensitive, or undefined when none fits. */
+export function tagForSection(name: string): string | undefined {
+  return SECTION_TAGS.get(name.trim().toLowerCase());
 }
 
 const HEADING = /^##\s+(.+?)\s*$/;
 const SUBHEADING = /^###\s+(.+?)\s*$/;
+const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 
 /** Extract the version and optional date from a `## ...` heading line. */
 function parseHeading(text: string): { version: string; date?: string } {
@@ -36,7 +67,13 @@ export function parseChangelog(text: string): ParsedChangelogEntry[] {
   const lines = text.split(/\r?\n/);
   const entries: ParsedChangelogEntry[] = [];
 
-  let current: { version: string; date?: string; body: string[]; tags: string[] } | null = null;
+  let current: {
+    version: string;
+    date?: string;
+    body: string[];
+    tags: string[];
+    unmapped: string[];
+  } | null = null;
   const flush = () => {
     if (!current) return;
     if (current.version.toLowerCase() !== "unreleased") {
@@ -45,23 +82,37 @@ export function parseChangelog(text: string): ParsedChangelogEntry[] {
         publishedAt: toRfc3339(current.date),
         markdown: current.body.join("\n").trim(),
         tags: current.tags,
+        unmapped: current.unmapped,
       });
     }
     current = null;
   };
 
+  let fence = "";
   for (const line of lines) {
-    const h = line.match(HEADING);
-    if (h) {
-      flush();
-      const { version, date } = parseHeading(h[1]);
-      current = { version, date, body: [], tags: [] };
-      continue;
+    const marker = line.match(FENCE)?.[1];
+    if (fence) {
+      const closes = marker?.[0] === fence[0] && marker.length >= fence.length;
+      if (closes && line.trim() === marker) fence = "";
+    } else if (marker) {
+      fence = marker;
+    } else {
+      const h = line.match(HEADING);
+      if (h) {
+        flush();
+        const { version, date } = parseHeading(h[1]);
+        current = { version, date, body: [], tags: [], unmapped: [] };
+        continue;
+      }
+      const sub = current ? line.match(SUBHEADING) : null;
+      if (current && sub) {
+        const name = sub[1].trim();
+        const tag = tagForSection(name);
+        if (!tag) current.unmapped.push(name);
+        else if (!current.tags.includes(tag)) current.tags.push(tag);
+      }
     }
-    if (!current) continue; // preamble before the first version heading
-    const sub = line.match(SUBHEADING);
-    if (sub) current.tags.push(sub[1].trim());
-    current.body.push(line);
+    current?.body.push(line);
   }
   flush();
   return entries;
