@@ -112,13 +112,21 @@ The action writes the job summary first. Then it sets the job result:
 - When the key lacks `article.publish`, `changelog.publish`, or
   `changelog.delete`, the action logs a warning and continues without that step.
   Without `changelog.publish`, new changelog entries stay drafts.
-- When the server refuses to create a sidebar section with `402` or `403`, the
-  action still syncs the article content. The article counts as created or
-  updated, not as failed. An existing article keeps its place in the sidebar. A
-  new article has no section. When the action publishes it, the server puts it
-  in the first section. The action logs one warning that names the sections. To
-  place the articles, add `section.create` to the key or create the sections in
-  the app. The next run then moves the articles into their sections.
+- When the server answers `402` or `403` to a new sidebar section or to the move
+  of an article, the action still syncs the article content. The article keeps
+  its place in the sidebar and counts as created, updated, or unchanged, not as
+  failed. A new article that the action cannot place has no section. When the
+  action publishes it, the server puts it in the first section.
+- Without `section.create`, the action logs one warning per run that names the
+  sections. To place the articles, add `section.create` to the key or create the
+  sections in the app. The next run then moves the articles into them.
+- Without `article.place`, the action logs one warning per run that names the
+  articles. To move them, add `article.place` to the key or move them in the
+  app. A new article in a section that exists still goes into it, because the
+  create request places it.
+- The server answers `402` when the plan does not allow a step, for example a
+  move into a section that is not public. The warning then says that the plan
+  does not allow the step.
 - When the key lacks `changelog.update`, the action sees only published
   changelog entries. It does not create a draft or a scheduled entry, because
   the next run cannot find that entry and creates it again. Each such version is
@@ -148,7 +156,7 @@ body again with `allow_shrink` and logs a warning.
   the section does not exist, the action creates it. This needs
   `section.create`.
 - An article that an earlier run could not place goes into its section on the
-  next run.
+  next run. To move an article, the action needs `article.place`.
 - The action never changes encrypted articles or generated OpenAPI pages.
 - When the server answers `429`, the action waits for the `Retry-After` time and
   sends the request again, up to 3 times. A read request does the same for

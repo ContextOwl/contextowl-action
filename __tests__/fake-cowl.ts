@@ -112,6 +112,7 @@ export function legacyUpgradeRequired(operation: string): CowlAPIError {
 
 export interface FakePerms {
   articlePublish: boolean;
+  articlePlace: boolean;
   sectionCreate: boolean;
   changelogUpdate: boolean;
   changelogPublish: boolean;
@@ -136,6 +137,7 @@ export class FakeCowl implements Cowl {
   ignoreOffset = false;
   perms: FakePerms = {
     articlePublish: true,
+    articlePlace: true,
     sectionCreate: true,
     changelogUpdate: true,
     changelogPublish: true,
@@ -373,6 +375,7 @@ export class FakeCowl implements Cowl {
 
   async placeArticle(_ws: string | undefined, slug: string, sectionKey: string): Promise<void> {
     this.enter("placeArticle", `place ${slug} ${sectionKey}`);
+    if (!this.perms.articlePlace) throw this.denied("place article", "article.place");
     const a = this.articles.get(slug);
     if (!a) throw apiError("place article", 404, { code: "not_found", message: "no such article" });
     if (!unplaced(sectionKey) && !this.sections.has(sectionKey)) {
