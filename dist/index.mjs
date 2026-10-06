@@ -14911,6 +14911,28 @@ async function sectionKeyMap(cowl, workspace, articles) {
 function isGeneratedPageError(err) {
   return err instanceof CowlAPIError && err.code === "openapi_generated";
 }
+function isRefusal(err) {
+  return err instanceof CowlAPIError && (err.status === 402 || err.status === 403);
+}
+function quotedList(items) {
+  const quoted = items.map((item) => `"${item}"`);
+  const last = quoted.pop() ?? "";
+  return quoted.length > 0 ? `${quoted.join(", ")} and ${last}` : last;
+}
+function sectionRefusedWarning(err, labels) {
+  const [noun, these] = labels.length === 1 ? ["section", "this section"] : ["sections", "these sections"];
+  const reason = err.status === 402 ? "your plan does not allow section.create" : "the key lacks section.create";
+  const remedy = err.status === 402 ? `create the ${noun} in the app or upgrade the plan` : `add section.create to the key or create the ${noun} in the app`;
+  return `${reason}, so the action cannot create the ${noun} ${quotedList(labels)}. It syncs the articles for ${these} but does not place them there. To place them, ${remedy}. Server error: ${describeError(err)}`;
+}
+function placeRefusedWarning(err, titles) {
+  const one = titles.length === 1;
+  const articles = `${one ? "the article" : "the articles"} ${quotedList(titles)}`;
+  const [target, it, into] = one ? ["the article", "it", "its section"] : ["the articles", "them", "their sections"];
+  const reason = err.status === 402 ? `your plan does not allow article.place for ${articles}, so the action cannot move ${it}` : `the key lacks article.place, so the action cannot move ${articles}`;
+  const remedy = err.status === 402 ? "upgrade the plan" : `add article.place to the key or move ${it} in the app`;
+  return `${reason} into ${into}. It syncs the content and keeps the current placement. To move ${target}, ${remedy}. Server error: ${describeError(err)}`;
+}
 function removalText(err) {
   const removed = num(err.details.removed, -1);
   const current = num(err.details.currentLength, -1);
@@ -14995,12 +15017,43 @@ async function syncDocs(cowl, logger2, opts) {
       throw err;
     }
   };
-  const ensureSectionKey = async (label) => {
-    const existing = sectionKeys.get(labelKey(label));
+  let sectionRefusal;
+  const refusedLabels = /* @__PURE__ */ new Map();
+  const sectionKeyFor = async (label) => {
+    const k = labelKey(label);
+    const existing = sectionKeys.get(k);
     if (existing) return existing;
-    const key = await cowl.createSection(opts.workspace, label);
-    sectionKeys.set(labelKey(label), key);
-    return key;
+    if (!sectionRefusal) {
+      try {
+        const key = await cowl.createSection(opts.workspace, label);
+        sectionKeys.set(k, key);
+        return key;
+      } catch (err) {
+        if (!isRefusal(err)) throw err;
+        sectionRefusal = err;
+      }
+    }
+    if (!refusedLabels.has(k)) refusedLabels.set(k, label.trim());
+    return void 0;
+  };
+  let placeRefusal;
+  let placeDenied = false;
+  const unmoved = [];
+  const placeInSection = async (d, slug) => {
+    if (!placeDenied) {
+      const key = await sectionKeyFor(d.section);
+      if (!key) return false;
+      try {
+        await cowl.placeArticle(opts.workspace, slug, key);
+        return true;
+      } catch (err) {
+        if (!isRefusal(err)) throw err;
+        if (!placeRefusal) placeRefusal = err;
+        if (err.status === 403) placeDenied = true;
+      }
+    }
+    unmoved.push(d.title);
+    return false;
   };
   let sectionKeyRejected = false;
   const createArticle = async (d, sectionKey) => {
@@ -15009,6 +15062,9 @@ async function syncDocs(cowl, logger2, opts) {
     try {
       return await cowl.createArticle(opts.workspace, { ...args, sectionKey });
     } catch (err) {
+      if (err instanceof CowlAPIError && err.status === 402) {
+        return cowl.createArticle(opts.workspace, args);
+      }
       if (!(err instanceof CowlAPIError && err.status === 400 && err.code === "invalid_body")) {
         throw err;
       }
@@ -15045,12 +15101,9 @@ async function syncDocs(cowl, logger2, opts) {
     try {
       const known = sectionKeys.get(labelKey(d.section));
       const created = await createArticle(d, known);
-      if (!known || created.nav !== known) {
-        const key = known ?? await ensureSectionKey(d.section);
-        await cowl.placeArticle(opts.workspace, created.slug, key);
-      }
+      const placed = known !== void 0 && created.nav === known || await placeInSection(d, created.slug);
       if (d.status && d.status !== "DRAFT") await setStatus(created.slug, d.status);
-      result.lines.push(`created "${d.title}" in ${d.section}`);
+      result.lines.push(placed ? `created "${d.title}" in ${d.section}` : `created "${d.title}"`);
       result.created++;
     } catch (err) {
       fail(`create "${d.title}" failed: ${describeError(err)}`);
@@ -15070,10 +15123,7 @@ async function syncDocs(cowl, logger2, opts) {
       reasons.push("title");
     }
     const sectionChanged = labelKey(d.section) !== labelKey(r.section);
-    if (sectionChanged) {
-      patch.section = d.section;
-      reasons.push("section");
-    }
+    if (sectionChanged) reasons.push("section");
     const needsPlacement = sectionChanged || !isPlaced(r.nav);
     const statusChanged = !!d.status && d.status !== r.status;
     if (reasons.length === 0 && !needsPlacement && !statusChanged) {
@@ -15091,16 +15141,22 @@ async function syncDocs(cowl, logger2, opts) {
       continue;
     }
     try {
-      if (reasons.length > 0) {
+      const edited = patch.markdown !== void 0 || patch.title !== void 0;
+      if (edited) {
         if (d.version) patch.version = d.version;
         await patchArticle(d, patch);
       }
-      if (needsPlacement) {
-        await cowl.placeArticle(opts.workspace, r.slug, await ensureSectionKey(d.section));
+      const moved = needsPlacement && await placeInSection(d, r.slug);
+      if (moved && sectionChanged) {
+        await cowl.updateArticle(opts.workspace, { slug: r.slug, section: d.section });
       }
       if (statusChanged && d.status) await setStatus(r.slug, d.status);
-      result.lines.push(`updated "${d.title}"`);
-      result.updated++;
+      if (edited || moved || statusChanged) {
+        result.lines.push(`updated "${d.title}"`);
+        result.updated++;
+      } else {
+        result.skipped++;
+      }
     } catch (err) {
       if (isGeneratedPageError(err)) {
         warn(`skipped OpenAPI-generated page "${r.title}"`);
@@ -15109,6 +15165,8 @@ async function syncDocs(cowl, logger2, opts) {
       }
     }
   }
+  if (sectionRefusal) warn(sectionRefusedWarning(sectionRefusal, [...refusedLabels.values()]));
+  if (placeRefusal) warn(placeRefusedWarning(placeRefusal, unmoved));
   const orphans = remote.filter(
     (a) => !claimed.has(a.slug) && a.status !== "DEPRECATED" && a.source !== "openapi"
   );
