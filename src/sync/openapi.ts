@@ -2,7 +2,7 @@
 // The server diffs and prunes generated pages itself and returns the counts.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { Cowl } from "../types.js";
-import { CowlAPIError } from "../types.js";
+import { CowlAPIError, describeError } from "../types.js";
 import type { Logger } from "../logger.js";
 import { type SurfaceResult, emptyResult } from "./plan.js";
 
@@ -10,6 +10,13 @@ export interface OpenapiSyncOptions {
   spec: string;
   workspace: string | undefined;
   dryRun: boolean;
+}
+
+/** Why the server refused the attach, for a 402 or 403 answer. */
+function skipReason(err: CowlAPIError): string {
+  if (err.status === 402) return "your plan does not include the OpenAPI reference on this server";
+  const permission = err.details.permission;
+  return `the key lacks ${typeof permission === "string" ? permission : "openapi.attach"}`;
 }
 
 export async function syncOpenapi(
@@ -28,8 +35,11 @@ export async function syncOpenapi(
   }
 
   try {
-    const stats = await cowl.attachOpenapi(opts.workspace, spec);
-    if (stats) {
+    const { stats, unchanged } = await cowl.attachOpenapi(opts.workspace, spec);
+    if (unchanged) {
+      result.skipped++;
+      result.lines.push("OpenAPI spec unchanged: kept the generated pages");
+    } else if (stats) {
       result.created = stats.created;
       result.updated = stats.updated;
       result.deleted = stats.deleted;
@@ -40,11 +50,15 @@ export async function syncOpenapi(
       result.lines.push("attached OpenAPI spec");
     }
   } catch (err) {
-    if (err instanceof CowlAPIError && err.isPermissionDenied("openapi.attach")) {
-      result.warnings.push("token lacks openapi.attach; skipping OpenAPI sync");
-      logger.warning("openapi: token lacks openapi.attach; skipping");
+    if (err instanceof CowlAPIError && (err.status === 402 || err.status === 403)) {
+      const message = `skipped the OpenAPI step because ${skipReason(err)}. Server error: ${describeError(err)}`;
+      result.warnings.push(message);
+      logger.warning(`openapi: ${message}`);
     } else {
-      throw err;
+      const message = `attach OpenAPI spec failed: ${describeError(err)}`;
+      result.failed++;
+      result.failures.push(message);
+      logger.warning(`openapi: ${message}`);
     }
   }
 

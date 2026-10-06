@@ -7,14 +7,14 @@ branding:
 
 inputs:
   token:
-    description: "ContextOwl personal access token (cowl_pat_...). Store it in an encrypted secret."
+    description: "ContextOwl agent key. It starts with cowl_pat_. Pass it from an encrypted secret, for example secrets.CONTEXTOWL_PAT."
     required: true
   server-url:
     description: "Base URL of your ContextOwl instance. The action appends /api/v1."
     required: false
     default: "https://contextowl.co"
   config:
-    description: "Path to the .contextowl.yml config file, relative to the repo root."
+    description: "Path to the .contextowl.yml config file, relative to the repo root. In the changelog file, the ### subsections Added, Changed, Deprecated, Removed, Fixed and Security map to the tags new, improved, deprecated, deprecated, fixed and security. The match ignores case. Other subsection names get no tag and a warning."
     required: false
     default: ".contextowl.yml"
   workspace:
@@ -29,6 +29,14 @@ inputs:
     description: "Compute and print the plan without making any changes."
     required: false
     default: "false"
+  fail-on-error:
+    description: "Fail the job when an item fails to sync. The action writes the job summary first. Set it to false to report failed items as warnings. An error that stops a whole surface, such as a rejected key, always fails the job."
+    required: false
+    default: "true"
+  allow-shrink:
+    description: "Accept a new article body that removes more than half of the current text and more than 2,000 characters. The server refuses such a body to guard against a broken file. When this is false, the article keeps its current body and counts as a failed item."
+    required: false
+    default: "false"
 
 outputs:
   created:
@@ -39,6 +47,8 @@ outputs:
     description: "Number of items deleted or deprecated by prune."
   skipped:
     description: "Number of unchanged items skipped."
+  failed:
+    description: "Number of items that failed to sync. A surface that stops before it finishes, for example after a rejected key, counts as 1."
 
 runs:
   using: "node24"

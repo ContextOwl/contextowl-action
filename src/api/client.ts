@@ -1,21 +1,40 @@
 import {
+  type ChangelogListQuery,
   type Cowl,
   type CreateArticleArgs,
   type CreateChangelogArgs,
+  type CreatedArticle,
+  type OpenapiAttachResult,
   type OpenapiStats,
   type RemoteArticle,
   type RemoteChangelog,
+  type RemoteSection,
   type UpdateArticleArgs,
   type UpdateChangelogArgs,
   CowlAPIError,
 } from "../types.js";
 import { asArray, bool, isRec, lc, num, str, strArray } from "../util/json.js";
+import { USER_AGENT } from "../version.js";
+
+/** Attempts per request when the server answers 429, or 502 to 504 for a GET. */
+const MAX_ATTEMPTS = 4;
+const MAX_RETRY_DELAY_MS = 30_000;
+
+export interface RestClientOptions {
+  /** Waits between retries. Tests replace it to skip the delay. */
+  sleep?: (ms: number) => Promise<void>;
+}
 
 export class RestClient implements Cowl {
+  private sleep: (ms: number) => Promise<void>;
+
   constructor(
     private apiUrl: string,
     private token: string,
-  ) {}
+    options: RestClientOptions = {},
+  ) {
+    this.sleep = options.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms)));
+  }
 
   private workspacePath(workspace: string | undefined): string {
     return `workspaces/${encodeURIComponent(workspace || "-")}`;
@@ -26,44 +45,46 @@ export class RestClient implements Cowl {
     path: string,
     body?: Record<string, unknown>,
   ): Promise<T> {
-    let response: Response;
-    try {
-      response = await fetch(`${this.apiUrl}/${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          Accept: "application/json",
-          ...(body ? { "Content-Type": "application/json" } : {}),
-        },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-      });
-    } catch (err) {
-      throw new CowlAPIError(`${method} ${path}`, `request failed: ${(err as Error).message}`);
-    }
+    const operation = `${method} ${path}`;
+    const response = await this.send(operation, `${this.apiUrl}/${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: "application/json",
+        "User-Agent": USER_AGENT,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
 
     const text = await response.text();
-    let data: unknown = null;
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        if (response.ok) {
-          throw new CowlAPIError(`${method} ${path}`, "invalid JSON response", response.status);
-        }
-      }
-    }
     if (!response.ok) {
-      const error = isRec(data) && isRec(data.error) ? lc(data.error) : {};
-      throw new CowlAPIError(
-        `${method} ${path}`,
-        str(error.message) ||
-          response.statusText ||
-          `request failed with status ${response.status}`,
-        response.status,
-        str(error.code),
-      );
+      throw errorFromResponse(operation, response.status, text, response.statusText);
     }
-    return data as T;
+    if (!text) return null as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new CowlAPIError(operation, "invalid JSON response", response.status);
+    }
+  }
+
+  // The rate limiter answers 429 before the handler runs, so a retry never
+  // repeats a write. A 5xx can come after a write, so only a GET retries it.
+  private async send(operation: string, url: string, init: RequestInit): Promise<Response> {
+    for (let attempt = 1; ; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(url, init);
+      } catch (err) {
+        throw new CowlAPIError(operation, `request failed: ${(err as Error).message}`);
+      }
+      if (attempt >= MAX_ATTEMPTS || !shouldRetry(init.method ?? "GET", response.status)) {
+        return response;
+      }
+      await response.arrayBuffer().catch(() => undefined);
+      await this.sleep(retryDelayMs(response.headers.get("Retry-After"), attempt));
+    }
   }
 
   async listArticles(workspace: string | undefined): Promise<RemoteArticle[]> {
@@ -79,7 +100,18 @@ export class RestClient implements Cowl {
           nav: str(r.nav),
           status: str(r.status),
           encrypted: bool(r.encrypted),
+          source: str(r.source),
         };
+      });
+  }
+
+  async listSections(workspace: string | undefined): Promise<RemoteSection[]> {
+    const data = await this.request<unknown>("GET", `${this.workspacePath(workspace)}/sections`);
+    return asArray(data)
+      .filter(isRec)
+      .map((row) => {
+        const r = lc(row);
+        return { key: str(r.key), label: str(r.label) };
       });
   }
 
@@ -91,23 +123,34 @@ export class RestClient implements Cowl {
     return isRec(data) ? str(lc(data).markdown) : "";
   }
 
-  async createArticle(workspace: string | undefined, args: CreateArticleArgs): Promise<string> {
+  async createArticle(
+    workspace: string | undefined,
+    args: CreateArticleArgs,
+  ): Promise<CreatedArticle> {
     const data = await this.request<unknown>("POST", `${this.workspacePath(workspace)}/articles`, {
       title: args.title,
       slug: args.slug,
       section: args.section,
+      section_key: args.sectionKey,
       markdown: args.markdown,
     });
-    const slug = isRec(data) ? str(lc(data).slug) : "";
+    const rec = isRec(data) ? lc(data) : {};
+    const slug = str(rec.slug);
     if (!slug) throw new CowlAPIError("create article", "no slug returned");
-    return slug;
+    return { slug, nav: str(rec.nav) };
   }
 
   async updateArticle(workspace: string | undefined, args: UpdateArticleArgs): Promise<void> {
     await this.request(
       "PATCH",
       `${this.workspacePath(workspace)}/articles/${encodeURIComponent(args.slug)}`,
-      { title: args.title, section: args.section, markdown: args.markdown, status: args.status },
+      {
+        title: args.title,
+        section: args.section,
+        markdown: args.markdown,
+        status: args.status,
+        allow_shrink: args.allowShrink || undefined,
+      },
     );
   }
 
@@ -132,10 +175,18 @@ export class RestClient implements Cowl {
     );
   }
 
-  async listChangelog(workspace: string | undefined, drafts: boolean): Promise<RemoteChangelog[]> {
+  async listChangelog(
+    workspace: string | undefined,
+    query: ChangelogListQuery,
+  ): Promise<RemoteChangelog[]> {
+    const params = new URLSearchParams();
+    if (query.drafts) params.set("drafts", "true");
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    if (query.offset !== undefined) params.set("offset", String(query.offset));
+    const search = params.toString();
     const data = await this.request<unknown>(
       "GET",
-      `${this.workspacePath(workspace)}/changelog?drafts=${drafts}`,
+      `${this.workspacePath(workspace)}/changelog${search ? `?${search}` : ""}`,
     );
     return asArray(data)
       .filter(isRec)
@@ -177,12 +228,49 @@ export class RestClient implements Cowl {
     await this.request("DELETE", `${this.workspacePath(workspace)}/changelog/${id}`);
   }
 
-  async attachOpenapi(workspace: string | undefined, spec: string): Promise<OpenapiStats | null> {
+  async attachOpenapi(workspace: string | undefined, spec: string): Promise<OpenapiAttachResult> {
     const data = await this.request<unknown>("PUT", `${this.workspacePath(workspace)}/openapi`, {
       spec,
     });
-    return statsOf(data);
+    return { stats: statsOf(data), unchanged: isRec(data) && lc(data).unchanged === true };
   }
+}
+
+/**
+ * Build the error for a failed response from its status and body text. The
+ * body is the REST error envelope: `{"error":{"code","message","status","details"}}`.
+ */
+export function errorFromResponse(
+  operation: string,
+  status: number,
+  text: string,
+  statusText = "",
+): CowlAPIError {
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  const error = isRec(data) && isRec(data.error) ? lc(data.error) : {};
+  return new CowlAPIError(
+    operation,
+    str(error.message) || statusText || `request failed with status ${status}`,
+    status,
+    str(error.code) || undefined,
+    isRec(error.details) ? error.details : {},
+  );
+}
+
+function shouldRetry(method: string, status: number): boolean {
+  if (status === 429) return true;
+  return method === "GET" && (status === 502 || status === 503 || status === 504);
+}
+
+function retryDelayMs(retryAfter: string | null, attempt: number): number {
+  const seconds = retryAfter !== null && /^\d+$/.test(retryAfter.trim()) ? Number(retryAfter) : NaN;
+  const ms = Number.isNaN(seconds) ? 1000 * 2 ** (attempt - 1) : seconds * 1000;
+  return Math.min(ms, MAX_RETRY_DELAY_MS);
 }
 
 function statsOf(data: unknown): OpenapiStats | null {

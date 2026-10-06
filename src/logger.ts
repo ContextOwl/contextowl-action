@@ -2,6 +2,7 @@
 export interface Logger {
   info(message: string): void;
   warning(message: string): void;
+  error(message: string): void;
   startGroup(name: string): void;
   endGroup(): void;
 }
@@ -10,6 +11,7 @@ export interface Logger {
 export const nullLogger: Logger = {
   info() {},
   warning() {},
+  error() {},
   startGroup() {},
   endGroup() {},
 };
