@@ -14808,7 +14808,7 @@ import { basename, dirname } from "node:path";
 var import_yaml2 = __toESM(require_dist(), 1);
 var BOM = "\uFEFF";
 var OPENING_LINE = /^---[ \t]*\r?\n/;
-var CLOSING_LINE = /^---[ \t]*\r?(?:\n|$)/m;
+var CLOSING_LINE = /(?<=^|\n)---[ \t]*\r?(?:\n|$)/;
 function parseFrontMatter(source, sourceRel) {
   const text = source.startsWith(BOM) ? source.slice(BOM.length) : source;
   const opening = OPENING_LINE.exec(text);

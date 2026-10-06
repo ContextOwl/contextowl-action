@@ -89,6 +89,24 @@ describe("parseFrontMatter", () => {
       data: {},
       body: "---js\n{ title: 'T' }\n---\nbody",
     },
+    {
+      name: "a --- after a U+2028 line separator in a value",
+      source: "---\ntitle: T\nnote: a ---\n---\nbody",
+      data: { title: "T", note: "a ---" },
+      body: "body",
+    },
+    {
+      name: "a --- after a lone CR",
+      source: "---\ntitle: T\r---\nbody",
+      data: {},
+      body: "---\ntitle: T\r---\nbody",
+    },
+    {
+      name: "a lone CR after the closing ---",
+      source: "---\ntitle: T\n---\rbody",
+      data: {},
+      body: "---\ntitle: T\n---\rbody",
+    },
     { name: "no text", source: "", data: {}, body: "" },
   ])("parses a file with $name", ({ source, data, body }) => {
     expect(parseFrontMatter(source, "a.md")).toEqual({ data, body });

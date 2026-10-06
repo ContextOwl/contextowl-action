@@ -61,6 +61,23 @@ action reads the key from the `token` input, so you choose the secret name.
 surfaces. A surface that stops before it finishes counts as 1 in `failed`. The
 action also writes a summary table to the workflow run.
 
+## Front matter
+
+Each Markdown file in the docs directory becomes one article. Front matter is
+optional. It is the YAML text between a `---` line at the top of the file and
+the next `---` line. The
+[GitHub Action guide](https://developer.contextowl.co/docs/platform/github-action#docs)
+lists the fields.
+
+- The action reads the front matter as YAML 1.2. A date-like value such as
+  `version: 2024-06-20` stays text.
+- A file that starts with a `---` line and has no closing `---` line has no
+  front matter. The whole file becomes the article body.
+- The opening line must be `---` alone. The action does not read `---js` or
+  front matter in another language.
+- Invalid YAML in the front matter stops the docs sync. The error names the
+  file and the line.
+
 ## Changelog tags
 
 Each `## [version] - date` heading becomes one changelog entry. Before the

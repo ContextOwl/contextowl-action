@@ -12,7 +12,9 @@ export interface FrontMatter {
 
 const BOM = "\uFEFF";
 const OPENING_LINE = /^---[ \t]*\r?\n/;
-const CLOSING_LINE = /^---[ \t]*\r?(?:\n|$)/m;
+// The pattern has no `m` flag. With it, `^` and `$` also match at a lone CR,
+// U+2028, and U+2029 in the middle of a line.
+const CLOSING_LINE = /(?<=^|\n)---[ \t]*\r?(?:\n|$)/;
 
 /** Throws when the front matter is not valid YAML. */
 export function parseFrontMatter(source: string, sourceRel: string): FrontMatter {
