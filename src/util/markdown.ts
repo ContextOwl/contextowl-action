@@ -1,7 +1,7 @@
 // Parses a Markdown file into a desired article: front-matter + derived title,
 // section, and body.
-import matter from "gray-matter";
 import { basename, dirname } from "node:path";
+import { parseFrontMatter } from "./frontmatter.js";
 import type { MarkdownFile } from "./walk.js";
 
 /** Valid article statuses accepted by ContextOwl (uppercase on the wire). */
@@ -57,7 +57,7 @@ function normalizeStatus(value: unknown, sourceRel: string): ArticleStatus | und
 
 /** Parse one Markdown file into a DesiredArticle. */
 export function parseArticle(file: MarkdownFile, raw: string): DesiredArticle {
-  const { data, content } = matter(raw);
+  const { data, body: content } = parseFrontMatter(raw, file.rel);
   const body = content.trim();
   const title =
     (typeof data.title === "string" && data.title.trim()) ||

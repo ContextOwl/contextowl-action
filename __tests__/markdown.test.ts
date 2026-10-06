@@ -32,6 +32,12 @@ describe("parseArticle", () => {
   it("strips front-matter from the body", () => {
     expect(parseArticle(file("a.md"), "---\ntitle: T\n---\nhello").markdown).toBe("hello");
   });
+
+  it("keeps a date-like version as text", () => {
+    expect(parseArticle(file("a.md"), "---\nversion: 2024-06-20\n---\nx").version).toBe(
+      "2024-06-20",
+    );
+  });
 });
 
 describe("titleFromFilename", () => {
