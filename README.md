@@ -112,6 +112,13 @@ The action writes the job summary first. Then it sets the job result:
 - When the key lacks `article.publish`, `changelog.publish`, or
   `changelog.delete`, the action logs a warning and continues without that step.
   Without `changelog.publish`, new changelog entries stay drafts.
+- When the server refuses to create a sidebar section with `402` or `403`, the
+  action still syncs the article content. The article counts as created or
+  updated, not as failed. An existing article keeps its place in the sidebar. A
+  new article has no section. When the action publishes it, the server puts it
+  in the first section. The action logs one warning that names the sections. To
+  place the articles, add `section.create` to the key or create the sections in
+  the app. The next run then moves the articles into their sections.
 - When the key lacks `changelog.update`, the action sees only published
   changelog entries. It does not create a draft or a scheduled entry, because
   the next run cannot find that entry and creates it again. Each such version is
@@ -137,7 +144,9 @@ body again with `allow_shrink` and logs a warning.
   many versions never creates duplicate entries. When the server does not
   support paging and returns 50 entries or more, the changelog sync stops before
   it changes an entry.
-- A new article goes into its sidebar section when the action creates it.
+- A new article goes into its sidebar section when the action creates it. When
+  the section does not exist, the action creates it. This needs
+  `section.create`.
 - An article that an earlier run could not place goes into its section on the
   next run.
 - The action never changes encrypted articles or generated OpenAPI pages.

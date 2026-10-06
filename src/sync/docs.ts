@@ -75,6 +75,35 @@ function isGeneratedPageError(err: unknown): boolean {
   return err instanceof CowlAPIError && err.code === "openapi_generated";
 }
 
+/** `"A"`, `"A" and "B"`, or `"A", "B" and "C"`. */
+function quotedList(items: readonly string[]): string {
+  const quoted = items.map((item) => `"${item}"`);
+  const last = quoted.pop() ?? "";
+  return quoted.length > 0 ? `${quoted.join(", ")} and ${last}` : last;
+}
+
+/**
+ * The warning for the sections that the server refused to create. A 402 comes
+ * from the plan gate, and a 403 from a key without section.create.
+ */
+function sectionDeniedWarning(err: CowlAPIError, labels: readonly string[]): string {
+  const [noun, these] =
+    labels.length === 1 ? ["section", "this section"] : ["sections", "these sections"];
+  const reason =
+    err.status === 402
+      ? "your plan does not include section.create"
+      : "the key lacks section.create";
+  const remedy =
+    err.status === 402
+      ? `create the ${noun} in the app or upgrade the plan`
+      : `add section.create to the key or create the ${noun} in the app`;
+  return (
+    `${reason}, so the action cannot create the ${noun} ${quotedList(labels)}. ` +
+    `It syncs the articles for ${these} but does not place them there. ` +
+    `To place them, ${remedy}. Server error: ${describeError(err)}`
+  );
+}
+
 function removalText(err: CowlAPIError): string {
   const removed = num(err.details.removed, -1);
   const current = num(err.details.currentLength, -1);
@@ -179,12 +208,29 @@ export async function syncDocs(
     }
   };
 
-  const ensureSectionKey = async (label: string): Promise<string> => {
-    const existing = sectionKeys.get(labelKey(label));
+  // Placement is secondary to the content. After a 402 or 403 from
+  // createSection, the run does not try to create a section again. It syncs
+  // the content and warns once at the end. Other errors fail the article.
+  let sectionDenied: CowlAPIError | undefined;
+  const deniedLabels = new Map<string, string>();
+  const sectionKeyFor = async (label: string): Promise<string | undefined> => {
+    const k = labelKey(label);
+    const existing = sectionKeys.get(k);
     if (existing) return existing;
-    const key = await cowl.createSection(opts.workspace, label);
-    sectionKeys.set(labelKey(label), key);
-    return key;
+    if (!sectionDenied) {
+      try {
+        const key = await cowl.createSection(opts.workspace, label);
+        sectionKeys.set(k, key);
+        return key;
+      } catch (err) {
+        if (!(err instanceof CowlAPIError && (err.status === 402 || err.status === 403))) {
+          throw err;
+        }
+        sectionDenied = err;
+      }
+    }
+    if (!deniedLabels.has(k)) deniedLabels.set(k, label.trim());
+    return undefined;
   };
 
   // Servers without section_key decode request bodies strictly and answer 400
@@ -244,12 +290,10 @@ export async function syncDocs(
     try {
       const known = sectionKeys.get(labelKey(d.section));
       const created = await createArticle(d, known);
-      if (!known || created.nav !== known) {
-        const key = known ?? (await ensureSectionKey(d.section));
-        await cowl.placeArticle(opts.workspace, created.slug, key);
-      }
+      const key = known ?? (await sectionKeyFor(d.section));
+      if (key && created.nav !== key) await cowl.placeArticle(opts.workspace, created.slug, key);
       if (d.status && d.status !== "DRAFT") await setStatus(created.slug, d.status);
-      result.lines.push(`created "${d.title}" in ${d.section}`);
+      result.lines.push(key ? `created "${d.title}" in ${d.section}` : `created "${d.title}"`);
       result.created++;
     } catch (err) {
       fail(`create "${d.title}" failed: ${describeError(err)}`);
@@ -297,16 +341,24 @@ export async function syncDocs(
     }
 
     try {
-      if (reasons.length > 0) {
+      // Resolve the section before the patch. An article that cannot move keeps
+      // its label too, so a later run still sees the move and places it.
+      const key = needsPlacement ? await sectionKeyFor(d.section) : undefined;
+      if (sectionChanged && !key) delete patch.section;
+      const edited =
+        patch.markdown !== undefined || patch.title !== undefined || patch.section !== undefined;
+      if (edited) {
         if (d.version) patch.version = d.version;
         await patchArticle(d, patch);
       }
-      if (needsPlacement) {
-        await cowl.placeArticle(opts.workspace, r.slug, await ensureSectionKey(d.section));
-      }
+      if (key) await cowl.placeArticle(opts.workspace, r.slug, key);
       if (statusChanged && d.status) await setStatus(r.slug, d.status);
-      result.lines.push(`updated "${d.title}"`);
-      result.updated++;
+      if (edited || key || statusChanged) {
+        result.lines.push(`updated "${d.title}"`);
+        result.updated++;
+      } else {
+        result.skipped++;
+      }
     } catch (err) {
       if (isGeneratedPageError(err)) {
         warn(`skipped OpenAPI-generated page "${r.title}"`);
@@ -315,6 +367,8 @@ export async function syncDocs(
       }
     }
   }
+
+  if (sectionDenied) warn(sectionDeniedWarning(sectionDenied, [...deniedLabels.values()]));
 
   // Prune: deprecate remote articles not represented in the repo. Generated
   // OpenAPI pages belong to the OpenAPI sync.

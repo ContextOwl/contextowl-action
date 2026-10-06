@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { syncDocs } from "../src/sync/docs.js";
+import { jobFailure } from "../src/sync/plan.js";
 import { nullLogger } from "../src/logger.js";
-import { FakeCowl, apiError } from "./fake-cowl.js";
+import { FakeCowl, apiError, upgradeRequired } from "./fake-cowl.js";
 
 function writeTree(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "cowl-docs-"));
@@ -219,6 +220,157 @@ describe("syncDocs", () => {
       expect(cowl.articles.get("intro")!.status).toBe("DRAFT");
       expect(r.warnings.join(" ")).toMatch(/article\.publish/);
     }
+  });
+
+  it("syncs articles whose section the key cannot create and warns once, on every server", async () => {
+    for (const legacy of [false, true]) {
+      const cowl = new FakeCowl({ legacy });
+      cowl.perms.sectionCreate = false;
+      cowl.seedArticle({ title: "Overview", section: "Quickstart", nav: "none", markdown: "old" });
+      cowl.seedArticle({ title: "APIs", section: "Reference", nav: "none", markdown: "old" });
+      cowl.seedArticle({ title: "CLI", section: "Platform", markdown: "cli" });
+      cowl.seedArticle({ title: "Action", section: "Reference", nav: "none", markdown: "old" });
+      cowl.seedArticle({ title: "Setup", section: "Quickstart", nav: "none", markdown: "same" });
+      const dir = writeTree({
+        "01-overview.md": "---\ntitle: Overview\nsection: Quickstart\n---\nnew",
+        "02-apis.md": "---\ntitle: APIs\nsection: Reference\n---\nnew",
+        "03-cli.md": "---\ntitle: CLI\nsection: Platform\n---\ncli",
+        "04-action.md": "---\ntitle: Action\nsection: Reference\n---\nnew",
+        "05-setup.md": "---\ntitle: Setup\nsection: Quickstart\n---\nsame",
+      });
+      const r = await syncDocs(cowl, nullLogger, opts(dir));
+
+      expect([r.updated, r.skipped, r.failed]).toEqual([3, 2, 0]);
+      expect(jobFailure([r], true)).toBeUndefined();
+      expect(cowl.log).toEqual([
+        "section Quickstart",
+        "update overview markdown",
+        "update apis markdown",
+        "update action markdown",
+      ]);
+      for (const slug of ["overview", "apis", "action", "setup"]) {
+        expect(cowl.articles.get(slug)!.nav).toBe("none");
+      }
+      expect(cowl.articles.get("apis")!.markdown).toBe("new");
+      const serverError = legacy
+        ? "this key lacks the required permission"
+        : "this key lacks the section.create permission";
+      expect(r.warnings).toEqual([
+        `the key lacks section.create, so the action cannot create the sections "Quickstart" and "Reference". It syncs the articles for these sections but does not place them there. To place them, add section.create to the key or create the sections in the app. Server error: 403 permission_denied: ${serverError}`,
+      ]);
+    }
+  });
+
+  it("keeps the place and label of an article whose new section the key cannot create", async () => {
+    const cowl = new FakeCowl();
+    cowl.perms.sectionCreate = false;
+    cowl.seedArticle({ title: "Setup", section: "Guides", markdown: "old" });
+    const dir = writeTree({ "setup.md": "---\ntitle: Setup\nsection: Reference\n---\nnew" });
+    const first = await syncDocs(cowl, nullLogger, opts(dir));
+
+    expect([first.updated, first.failed]).toEqual([1, 0]);
+    expect(cowl.updateArticleCalls).toEqual([{ slug: "setup", markdown: "new" }]);
+    expect(cowl.articles.get("setup")).toMatchObject({
+      markdown: "new",
+      section: "Guides",
+      nav: "guides",
+    });
+    expect(first.warnings).toHaveLength(1);
+    expect(first.warnings[0]).toMatch(/cannot create the section "Reference"\./);
+
+    // Someone creates the section in the app. The next run moves the article.
+    cowl.sections.set("reference", "Reference");
+    cowl.log = [];
+    const second = await syncDocs(cowl, nullLogger, opts(dir));
+
+    expect([second.updated, second.failed]).toEqual([1, 0]);
+    expect(second.warnings).toEqual([]);
+    expect(cowl.log).toEqual(["update setup", "place setup reference"]);
+    expect(cowl.articles.get("setup")).toMatchObject({ section: "Reference", nav: "reference" });
+  });
+
+  it("creates a new article without section_key when the key cannot create its section", async () => {
+    const cowl = new FakeCowl();
+    cowl.perms.sectionCreate = false;
+    cowl.sections.set("guides", "Guides");
+    const dir = writeTree({
+      "tutorials/a.md": "first",
+      "tutorials/b.md": "---\ntitle: B\nstatus: STABLE\n---\nsecond",
+    });
+    const r = await syncDocs(cowl, nullLogger, opts(dir));
+
+    expect([r.created, r.failed]).toEqual([2, 0]);
+    expect(jobFailure([r], true)).toBeUndefined();
+    expect(cowl.createArticleCalls.map((c) => c.sectionKey)).toEqual([undefined, undefined]);
+    expect(cowl.log).toEqual([
+      "create A",
+      "section Tutorials",
+      "create B",
+      "update b status=STABLE",
+    ]);
+    expect(cowl.articles.get("a")).toMatchObject({
+      nav: "none",
+      status: "DRAFT",
+      markdown: "first",
+    });
+    // The action still publishes B, and the server puts it in the first section.
+    expect(cowl.articles.get("b")).toMatchObject({ nav: "guides", status: "STABLE" });
+    expect(r.lines).toEqual(['created "A"', 'created "B"']);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toMatch(
+      /section\.create, so the action cannot create the section "Tutorials"/,
+    );
+
+    // Someone creates the section in the app. The next run moves both articles.
+    cowl.sections.set("tutorials", "Tutorials");
+    cowl.log = [];
+    const next = await syncDocs(cowl, nullLogger, opts(dir));
+
+    expect([next.updated, next.failed]).toEqual([2, 0]);
+    expect(next.warnings).toEqual([]);
+    expect(cowl.log).toEqual(["place a tutorials", "update b", "place b tutorials"]);
+    expect(cowl.articles.get("a")!.nav).toBe("tutorials");
+    expect(cowl.articles.get("b")).toMatchObject({ nav: "tutorials", status: "STABLE" });
+  });
+
+  it("treats a 402 answer to createSection like a missing permission", async () => {
+    const cowl = new FakeCowl();
+    cowl.failNext("createSection", upgradeRequired("create section", "section.create"));
+    const dir = writeTree({ "tutorials/a.md": "first" });
+    const r = await syncDocs(cowl, nullLogger, opts(dir));
+
+    expect([r.created, r.failed]).toEqual([1, 0]);
+    expect(cowl.articles.get("a")!.nav).toBe("none");
+    expect(r.warnings).toEqual([
+      'your plan does not include section.create, so the action cannot create the section "Tutorials". It syncs the articles for this section but does not place them there. To place them, create the section in the app or upgrade the plan. Server error: 402 upgrade_required: section.create needs a paid plan or an active trial',
+    ]);
+  });
+
+  it("fails the article when createSection fails for another reason", async () => {
+    const creates = new FakeCowl();
+    creates.failNext("createSection", boom("create section"));
+    const r1 = await syncDocs(
+      creates,
+      nullLogger,
+      opts(writeTree({ "tutorials/a.md": "first", "tutorials/b.md": "second" })),
+    );
+    expect([r1.created, r1.failed]).toEqual([1, 1]);
+    expect(r1.failures).toEqual(['create "A" failed: 500 internal: boom']);
+    expect(r1.warnings).toEqual([]);
+    expect(creates.articles.get("b")!.nav).toBe("tutorials");
+    expect(jobFailure([r1], true)).toBe("1 item failed to sync. See the job summary.");
+
+    const updates = new FakeCowl();
+    updates.seedArticle({ title: "Setup", section: "Reference", nav: "none", markdown: "old" });
+    updates.failNext("createSection", boom("create section"));
+    const r2 = await syncDocs(
+      updates,
+      nullLogger,
+      opts(writeTree({ "reference/setup.md": "---\ntitle: Setup\n---\nnew" })),
+    );
+    expect([r2.updated, r2.failed]).toEqual([0, 1]);
+    expect(r2.failures).toEqual(['update "Setup" failed: 500 internal: boom']);
+    expect(r2.warnings).toEqual([]);
   });
 
   it("never modifies or prunes encrypted articles", async () => {

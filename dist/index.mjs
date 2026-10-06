@@ -14911,6 +14911,17 @@ async function sectionKeyMap(cowl, workspace, articles) {
 function isGeneratedPageError(err) {
   return err instanceof CowlAPIError && err.code === "openapi_generated";
 }
+function quotedList(items) {
+  const quoted = items.map((item) => `"${item}"`);
+  const last = quoted.pop() ?? "";
+  return quoted.length > 0 ? `${quoted.join(", ")} and ${last}` : last;
+}
+function sectionDeniedWarning(err, labels) {
+  const [noun, these] = labels.length === 1 ? ["section", "this section"] : ["sections", "these sections"];
+  const reason = err.status === 402 ? "your plan does not include section.create" : "the key lacks section.create";
+  const remedy = err.status === 402 ? `create the ${noun} in the app or upgrade the plan` : `add section.create to the key or create the ${noun} in the app`;
+  return `${reason}, so the action cannot create the ${noun} ${quotedList(labels)}. It syncs the articles for ${these} but does not place them there. To place them, ${remedy}. Server error: ${describeError(err)}`;
+}
 function removalText(err) {
   const removed = num(err.details.removed, -1);
   const current = num(err.details.currentLength, -1);
@@ -14995,12 +15006,26 @@ async function syncDocs(cowl, logger2, opts) {
       throw err;
     }
   };
-  const ensureSectionKey = async (label) => {
-    const existing = sectionKeys.get(labelKey(label));
+  let sectionDenied;
+  const deniedLabels = /* @__PURE__ */ new Map();
+  const sectionKeyFor = async (label) => {
+    const k = labelKey(label);
+    const existing = sectionKeys.get(k);
     if (existing) return existing;
-    const key = await cowl.createSection(opts.workspace, label);
-    sectionKeys.set(labelKey(label), key);
-    return key;
+    if (!sectionDenied) {
+      try {
+        const key = await cowl.createSection(opts.workspace, label);
+        sectionKeys.set(k, key);
+        return key;
+      } catch (err) {
+        if (!(err instanceof CowlAPIError && (err.status === 402 || err.status === 403))) {
+          throw err;
+        }
+        sectionDenied = err;
+      }
+    }
+    if (!deniedLabels.has(k)) deniedLabels.set(k, label.trim());
+    return void 0;
   };
   let sectionKeyRejected = false;
   const createArticle = async (d, sectionKey) => {
@@ -15045,12 +15070,10 @@ async function syncDocs(cowl, logger2, opts) {
     try {
       const known = sectionKeys.get(labelKey(d.section));
       const created = await createArticle(d, known);
-      if (!known || created.nav !== known) {
-        const key = known ?? await ensureSectionKey(d.section);
-        await cowl.placeArticle(opts.workspace, created.slug, key);
-      }
+      const key = known ?? await sectionKeyFor(d.section);
+      if (key && created.nav !== key) await cowl.placeArticle(opts.workspace, created.slug, key);
       if (d.status && d.status !== "DRAFT") await setStatus(created.slug, d.status);
-      result.lines.push(`created "${d.title}" in ${d.section}`);
+      result.lines.push(key ? `created "${d.title}" in ${d.section}` : `created "${d.title}"`);
       result.created++;
     } catch (err) {
       fail(`create "${d.title}" failed: ${describeError(err)}`);
@@ -15091,16 +15114,21 @@ async function syncDocs(cowl, logger2, opts) {
       continue;
     }
     try {
-      if (reasons.length > 0) {
+      const key = needsPlacement ? await sectionKeyFor(d.section) : void 0;
+      if (sectionChanged && !key) delete patch.section;
+      const edited = patch.markdown !== void 0 || patch.title !== void 0 || patch.section !== void 0;
+      if (edited) {
         if (d.version) patch.version = d.version;
         await patchArticle(d, patch);
       }
-      if (needsPlacement) {
-        await cowl.placeArticle(opts.workspace, r.slug, await ensureSectionKey(d.section));
-      }
+      if (key) await cowl.placeArticle(opts.workspace, r.slug, key);
       if (statusChanged && d.status) await setStatus(r.slug, d.status);
-      result.lines.push(`updated "${d.title}"`);
-      result.updated++;
+      if (edited || key || statusChanged) {
+        result.lines.push(`updated "${d.title}"`);
+        result.updated++;
+      } else {
+        result.skipped++;
+      }
     } catch (err) {
       if (isGeneratedPageError(err)) {
         warn(`skipped OpenAPI-generated page "${r.title}"`);
@@ -15109,6 +15137,7 @@ async function syncDocs(cowl, logger2, opts) {
       }
     }
   }
+  if (sectionDenied) warn(sectionDeniedWarning(sectionDenied, [...deniedLabels.values()]));
   const orphans = remote.filter(
     (a) => !claimed.has(a.slug) && a.status !== "DEPRECATED" && a.source !== "openapi"
   );

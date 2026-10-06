@@ -112,6 +112,7 @@ export function legacyUpgradeRequired(operation: string): CowlAPIError {
 
 export interface FakePerms {
   articlePublish: boolean;
+  sectionCreate: boolean;
   changelogUpdate: boolean;
   changelogPublish: boolean;
   changelogDelete: boolean;
@@ -135,6 +136,7 @@ export class FakeCowl implements Cowl {
   ignoreOffset = false;
   perms: FakePerms = {
     articlePublish: true,
+    sectionCreate: true,
     changelogUpdate: true,
     changelogPublish: true,
     changelogDelete: true,
@@ -355,6 +357,7 @@ export class FakeCowl implements Cowl {
   async createSection(_ws: string | undefined, label: string): Promise<string> {
     this.createSectionCalls.push(label);
     this.enter("createSection", `section ${label}`);
+    if (!this.perms.sectionCreate) throw this.denied("create section", "section.create");
     const wanted = label.trim().toLowerCase();
     if (!this.legacy) {
       for (const [key, existing] of this.sections) {
