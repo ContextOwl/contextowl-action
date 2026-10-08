@@ -149,6 +149,12 @@ failed item.
 To accept such a change, set `allow-shrink: true`. The action then sends the
 body again with `allow_shrink` and logs a warning.
 
+Under review, the server measures the removal against the pending proposal of
+the key when that proposal changes the text. The error then names the
+proposal. To send the new body, reject that proposal in **Admin > Proposals**
+or set `allow-shrink: true`. A body that equals the live body removes nothing
+from the live article, so the action sends it with `allow_shrink`.
+
 ## Review
 
 An organization can review agent changes. When the review is on and the key is
@@ -174,7 +180,45 @@ example:
 
 A change that waits does not fail the job. The next run sends the same change
 again, and the server keeps one proposal for it. An article whose move waits
-keeps its section until an editor approves the move.
+keeps its section until an editor approves the move. When an editor rejects a
+change, the next run files it again while the repository still has it.
+
+To publish on every merge, approve the key as a publishing key in
+**Admin > Settings > API**.
+
+### Changes before approval
+
+The server keeps one proposal for each item and key, and each write of the key
+changes that proposal. A field that a write leaves out keeps its value in the
+proposal. So when the changes of the key wait for review, the action reads the
+pending proposals at the start of each run with
+`GET /api/v1/workspaces/{workspace}/proposals`. A dry run reads none. For an
+item with a pending proposal, the action sends the full state from the
+repository:
+
+- When the repository reverts the change, the item equals the live content, and
+  the server withdraws the proposal. The item counts as unchanged.
+- When the repository changes the item again, the proposal holds only the
+  difference between the repository and the live content.
+- When the repository moves an article back to its current section, the server
+  withdraws the pending move.
+- When a file or a changelog version comes back after its prune waits, the
+  server withdraws the prune.
+
+These proposals stay until an editor rejects them:
+
+- The create of a changelog entry, when the file drops the version before the
+  approval. No write withdraws a create, so the action logs a warning with the
+  proposal number.
+- A proposal for an article or an entry that the repository no longer has,
+  when prune is off.
+- Any proposal, when the action cannot read the proposal list. The action then
+  logs a warning.
+
+The proposal list holds the proposals of all keys of the key owner. A write of
+this key never changes the proposal of another key.
+
+### Note for the reviewer
 
 Each write that can wait for review sends a note for the reviewer: the subject
 of the pushed commit and a link to the commit. The action reads
@@ -182,13 +226,11 @@ of the pushed commit and a link to the commit. The action reads
 `writes`, because older servers reject an unknown field. When the changes of
 the key wait for review, the action logs a hint at the start of the run.
 
-To publish on every merge, approve the key as a publishing key in
-**Admin > Settings > API**.
-
 ## Sync behavior
 
 - The action skips content that did not change, so revision history and the
-  audit log stay clean.
+  audit log stay clean. Under review, it also sends an unchanged item that has
+  a pending proposal. See [Changes before approval](#changes-before-approval).
 - The changelog sync reads all remote entries, 100 for each request. A file with
   many versions never creates duplicate entries. When the server does not
   support paging and returns 50 entries or more, the changelog sync stops before

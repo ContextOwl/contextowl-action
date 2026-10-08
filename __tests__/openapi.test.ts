@@ -111,6 +111,20 @@ describe("syncOpenapi", () => {
     expect(cowl.notes).toEqual(["Commit 1a2b3c4", "Commit 1a2b3c4"]);
   });
 
+  it("withdraws the pending spec when the repository reverts it", async () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "review";
+    cowl.openapiSpec = "openapi: 3.0.0\n";
+    const first = await syncOpenapi(cowl, nullLogger, opts(writeSpec("openapi: 3.1.0\n")));
+    expect(first.proposed).toBe(1);
+
+    const r = await syncOpenapi(cowl, nullLogger, opts(writeSpec("openapi: 3.0.0\n")));
+
+    expect([r.skipped, r.proposed, r.failed]).toEqual([1, 0, 0]);
+    expect(cowl.proposals.size).toBe(0);
+    expect(cowl.withdrawn.map((p) => p.objectType)).toEqual(["openapi"]);
+  });
+
   it("names the change without a link when the 202 answer has none", async () => {
     const cowl = new FakeCowl();
     cowl.attachOpenapi = async () => ({

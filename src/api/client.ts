@@ -10,6 +10,7 @@ import {
   type PendingReview,
   type RemoteArticle,
   type RemoteChangelog,
+  type RemoteProposal,
   type RemoteSection,
   type UpdateArticleArgs,
   type UpdateChangelogArgs,
@@ -113,7 +114,25 @@ export class RestClient implements Cowl {
 
   async identity(): Promise<KeyIdentity> {
     const data = await this.request<unknown>("GET", "me");
-    return { writes: isRec(data) ? str(lc(data).writes) : "" };
+    const rec = isRec(data) ? lc(data) : {};
+    return { writes: str(rec.writes), permissions: strArray(rec.permissions) };
+  }
+
+  async listProposals(workspace: string | undefined): Promise<RemoteProposal[]> {
+    const data = await this.request<unknown>("GET", `${this.workspacePath(workspace)}/proposals`);
+    return asArray(data)
+      .filter(isRec)
+      .map((row) => {
+        const r = lc(row);
+        return {
+          id: num(r.id),
+          objectType: str(r.objecttype),
+          status: str(r.status),
+          target: str(r.target),
+          slug: str(r.slug),
+          title: str(r.title),
+        };
+      });
   }
 
   async listArticles(workspace: string | undefined): Promise<RemoteArticle[]> {

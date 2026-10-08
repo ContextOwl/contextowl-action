@@ -72,6 +72,26 @@ export interface KeyIdentity {
    * direct. Empty on servers without the review of agent changes.
    */
   writes: string;
+  /** The permissions that the key can use. Empty on servers without the list. */
+  permissions: string[];
+}
+
+/** One row of the proposal list. */
+export interface RemoteProposal {
+  id: number;
+  /** article, placement, changelog, openapi, landing or workspace. */
+  objectType: string;
+  status: string;
+  /**
+   * The object that a proposal of a write under review changes, such as
+   * article:42, changelog:7 or changelog-new:<hash>. Empty for a proposal
+   * that a propose call filed.
+   */
+  target: string;
+  /** The slug of the article, for an article or a placement proposal. */
+  slug: string;
+  /** The article title, or the title of the changelog entry. */
+  title: string;
 }
 
 export interface CreateArticleArgs {
@@ -142,6 +162,11 @@ export interface UpdateChangelogArgs {
 export interface Cowl {
   /** Describe the key with GET /api/v1/me. Servers before the contract answer 404. */
   identity(): Promise<KeyIdentity>;
+  /**
+   * List the pending proposals of the key owner in the workspace. The list
+   * holds the rows of every key of the owner, not only of this key.
+   */
+  listProposals(workspace: string | undefined): Promise<RemoteProposal[]>;
   listArticles(workspace: string | undefined): Promise<RemoteArticle[]>;
   /** List the sidebar sections in sidebar order. Servers before the contract answer 404. */
   listSections(workspace: string | undefined): Promise<RemoteSection[]>;

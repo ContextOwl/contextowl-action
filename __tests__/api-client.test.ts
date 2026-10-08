@@ -308,15 +308,82 @@ describe("RestClient", () => {
 
   it("reads writes from GET /api/v1/me, and an empty value when the server has none", async () => {
     const calls = stubFetch([
-      json({ name: "ci", writes: "review", publishingKey: false }),
+      json({
+        name: "ci",
+        writes: "review",
+        publishingKey: false,
+        permissions: ["article.publish", "article.update", 7],
+      }),
       json({ name: "ci", permissions: ["article.read"] }),
+      json({ name: "ci" }),
     ]);
 
-    await expect(client().identity()).resolves.toEqual({ writes: "review" });
-    await expect(client().identity()).resolves.toEqual({ writes: "" });
+    await expect(client().identity()).resolves.toEqual({
+      writes: "review",
+      permissions: ["article.publish", "article.update"],
+    });
+    await expect(client().identity()).resolves.toEqual({
+      writes: "",
+      permissions: ["article.read"],
+    });
+    await expect(client().identity()).resolves.toEqual({ writes: "", permissions: [] });
     expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
       "GET https://contextowl.test/api/v1/me",
       "GET https://contextowl.test/api/v1/me",
+      "GET https://contextowl.test/api/v1/me",
+    ]);
+  });
+
+  it("lists the pending proposals of the workspace", async () => {
+    const calls = stubFetch([
+      json([
+        {
+          id: 12,
+          objectType: "article",
+          status: "pending",
+          target: "article:7",
+          slug: "intro",
+          title: "Intro",
+          summary: "Change intro: markdown",
+          withdrawn: false,
+          stale: false,
+        },
+        {
+          id: 13,
+          objectType: "changelog",
+          status: "pending",
+          target: "changelog:4",
+          title: "1.0.0",
+        },
+        { id: "x" },
+      ]),
+    ]);
+
+    await expect(client().listProposals("docs")).resolves.toEqual([
+      {
+        id: 12,
+        objectType: "article",
+        status: "pending",
+        target: "article:7",
+        slug: "intro",
+        title: "Intro",
+      },
+      {
+        id: 13,
+        objectType: "changelog",
+        status: "pending",
+        target: "changelog:4",
+        slug: "",
+        title: "1.0.0",
+      },
+      { id: 0, objectType: "", status: "", target: "", slug: "", title: "" },
+    ]);
+    expect(calls.map(({ url, method, body }) => ({ url, method, body }))).toEqual([
+      {
+        url: "https://contextowl.test/api/v1/workspaces/docs/proposals",
+        method: "GET",
+        body: undefined,
+      },
     ]);
   });
 

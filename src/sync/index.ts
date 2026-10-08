@@ -1,10 +1,11 @@
 // Runs the configured sync surfaces in order and returns their results.
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { type Cowl, describeError } from "../types.js";
+import { type Cowl, type KeyIdentity, describeError } from "../types.js";
 import type { Logger } from "../logger.js";
 import type { ResolvedConfig } from "../config.js";
 import { type Surface, type SurfaceResult, emptyResult } from "./plan.js";
+import { type ReviewState, pendingProposals } from "./review.js";
 import { syncDocs } from "./docs.js";
 import { syncChangelog } from "./changelog.js";
 import { syncOpenapi } from "./openapi.js";
@@ -41,25 +42,51 @@ async function runSurface(
 export const REVIEW_HINT =
   "The organization reviews agent changes, so changes to live content wait in Admin > Proposals until an editor approves them. To publish on merge, ask an admin to approve this key as a publishing key.";
 
+/** The warning when a run under review cannot read the pending proposals. */
+export const PROPOSALS_UNREAD =
+  "the action cannot read the pending proposals of the key. A change that the repository dropped before an editor approved it can stay in its proposal.";
+
+/** How the writes of a run go to the server. */
+interface WriteMode {
+  /** The note for the reviewer, or undefined for a server that rejects it. */
+  note?: string;
+  /** Set when the changes of the key to live content wait for review. */
+  review?: ReviewState;
+}
+
 /**
- * The note to send with each write that can wait for review. A server with
- * the review of agent changes returns writes from GET /api/v1/me and accepts
- * the note. Older servers reject an unknown field in a request body, so they
- * get no note. The identity is a convenience, so an error only drops the note.
+ * Read GET /api/v1/me. A server with the review of agent changes returns
+ * writes and accepts the note. Older servers reject an unknown field in a
+ * request body, so they get no note. The identity is a convenience, so an
+ * error only drops the note. When the changes of the key wait for review,
+ * the run also reads the pending proposals once. A dry run sends no writes,
+ * so it reads no proposals.
  */
-async function reviewNote(
+async function writeMode(
   cowl: Cowl,
   logger: Logger,
+  cfg: ResolvedConfig,
   note: string | undefined,
-): Promise<string | undefined> {
-  let writes: string;
+): Promise<WriteMode> {
+  let identity: KeyIdentity;
   try {
-    writes = (await cowl.identity()).writes;
+    identity = await cowl.identity();
   } catch {
-    return undefined;
+    return {};
   }
-  if (writes === "review") logger.info(REVIEW_HINT);
-  return writes ? note : undefined;
+  const mode: WriteMode = { note: identity.writes ? note : undefined };
+  if (identity.writes !== "review") return mode;
+  logger.info(REVIEW_HINT);
+  if (cfg.dryRun) return mode;
+  mode.review = { articlePublish: identity.permissions.includes("article.publish") };
+  if (cfg.docs || cfg.changelog) {
+    try {
+      mode.review.pending = pendingProposals(await cowl.listProposals(cfg.workspace));
+    } catch (err) {
+      logger.warning(`${PROPOSALS_UNREAD} Server error: ${describeError(err)}`);
+    }
+  }
+  return mode;
 }
 
 /**
@@ -93,7 +120,7 @@ export async function runSync(
     );
   }
 
-  const sentNote = await reviewNote(cowl, logger, note);
+  const { note: sentNote, review } = await writeMode(cowl, logger, cfg, note);
   const results: SurfaceResult[] = [];
 
   if (docsDir) {
@@ -106,6 +133,7 @@ export async function runSync(
           dryRun: cfg.dryRun,
           allowShrink: cfg.allowShrink,
           note: sentNote,
+          review,
         }),
       ),
     );
@@ -120,6 +148,7 @@ export async function runSync(
           prune: cfg.prune,
           dryRun: cfg.dryRun,
           note: sentNote,
+          review,
         }),
       ),
     );

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ResolvedConfig } from "../src/config.js";
 import { type Logger, nullLogger } from "../src/logger.js";
-import { REVIEW_HINT, runSync } from "../src/sync/index.js";
+import { PROPOSALS_UNREAD, REVIEW_HINT, runSync } from "../src/sync/index.js";
 import {
   type SurfaceResult,
   emptyResult,
@@ -104,6 +104,71 @@ describe("runSync", () => {
       // The fake answers 400 invalid_body to a note in a request body.
       expect(totals(results)).toMatchObject({ created: 1, updated: 1, failed: 0, proposed: 0 });
       expect(cowl.notes).toEqual([undefined, undefined, undefined]);
+    }
+  });
+
+  it("reads the pending proposals once and withdraws a change that the repository reverted", async () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "review";
+    cowl.seedArticle({ title: "Intro", markdown: "old" });
+    const root = repo();
+    const first = await runSync(cowl, nullLogger, config(), root, NOTE);
+    expect(totals(first)).toMatchObject({ skipped: 0, proposed: 2, failed: 0 });
+
+    writeFileSync(join(root, "docs", "intro.md"), "old");
+    const second = await runSync(cowl, nullLogger, config(), root, NOTE);
+
+    expect(totals(second)).toMatchObject({ skipped: 1, proposed: 1, failed: 0 });
+    expect(cowl.withdrawn.map((p) => p.target)).toEqual(["article:intro"]);
+    expect(cowl.listProposalsCalls).toBe(2);
+  });
+
+  it("sends no status in the reset write when the key cannot use article.publish", async () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "review";
+    cowl.perms.articlePublish = false;
+    cowl.seedArticle({ title: "Intro", markdown: "old" });
+    const root = repo();
+    await runSync(cowl, nullLogger, config({ changelog: undefined }), root, NOTE);
+    expect(cowl.proposals.size).toBe(1);
+
+    writeFileSync(join(root, "docs", "intro.md"), "old");
+    const results = await runSync(cowl, nullLogger, config({ changelog: undefined }), root, NOTE);
+
+    expect(totals(results)).toMatchObject({ skipped: 1, proposed: 0, failed: 0 });
+    expect(cowl.updateArticleCalls.at(-1)).not.toHaveProperty("status");
+    expect(cowl.proposals.size).toBe(0);
+  });
+
+  it("warns and still syncs when the server cannot list the proposals", async () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "review";
+    cowl.failNext(
+      "listProposals",
+      apiError("list proposals", 500, { code: "internal", message: "boom" }),
+    );
+    const warnings: string[] = [];
+    const logger = { ...nullLogger, warning: (m: string) => warnings.push(m) };
+    const results = await runSync(cowl, logger, config(), repo(), NOTE);
+
+    expect(warnings).toEqual([`${PROPOSALS_UNREAD} Server error: 500 internal: boom`]);
+    expect(totals(results)).toMatchObject({ created: 1, proposed: 1, failed: 0 });
+  });
+
+  it("reads no proposals in a dry run, without the review, or without docs and changelog", async () => {
+    const runs: [FakeCowl["writes"], Partial<ResolvedConfig>][] = [
+      ["review", { dryRun: true }],
+      ["direct", {}],
+      [undefined, {}],
+      ["review", { docs: undefined, changelog: undefined, openapi: { spec: "openapi.yaml" } }],
+    ];
+    for (const [writes, over] of runs) {
+      const cowl = new FakeCowl();
+      cowl.writes = writes;
+      const results = await runSync(cowl, nullLogger, config(over), repo(), NOTE);
+
+      expect(totals(results).failed).toBe(0);
+      expect(cowl.listProposalsCalls).toBe(0);
     }
   });
 
