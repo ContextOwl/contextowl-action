@@ -42,6 +42,36 @@ export interface OpenapiAttachResult {
   stats: OpenapiStats | null;
   /** True when the spec equals the stored spec and the server kept the pages. */
   unchanged: boolean;
+  /** The proposal that holds the spec when it waits for review, else null. */
+  review: PendingReview | null;
+}
+
+/**
+ * A change that waits for an editor. When the organization reviews agent
+ * changes and the key is not a publishing key, the server answers 202 to a
+ * write that changes live content and keeps the change in a proposal. Older
+ * servers never answer 202, so every field is optional on the wire.
+ */
+export interface PendingReview {
+  /** Proposal id, or 0 when the server does not send it. */
+  id: number;
+  /** What the proposal changes, such as article, placement, changelog or openapi. */
+  objectType: string;
+  /** One line that says what the proposal changes. */
+  summary: string;
+  /** created, updated, unchanged or rebased. */
+  outcome: string;
+  /** The page in Admin > Proposals where an editor reviews the proposal. */
+  reviewUrl: string;
+}
+
+/** The fields of GET /api/v1/me that the action reads. */
+export interface KeyIdentity {
+  /**
+   * How the changes of the key to live content apply: none, review or
+   * direct. Empty on servers without the review of agent changes.
+   */
+  writes: string;
 }
 
 export interface CreateArticleArgs {
@@ -68,6 +98,8 @@ export interface UpdateArticleArgs {
   version?: string;
   /** Accept a body that removes most of the current text. */
   allowShrink?: boolean;
+  /** Note for the reviewer when the change waits for review. */
+  note?: string;
 }
 
 /** One page request for the changelog list. */
@@ -83,6 +115,8 @@ export interface CreateChangelogArgs {
   tags?: string[];
   status?: string;
   publishedAt?: string;
+  /** Note for the reviewer when the entry waits for review. */
+  note?: string;
 }
 
 export interface UpdateChangelogArgs {
@@ -92,30 +126,61 @@ export interface UpdateChangelogArgs {
   tags?: string[];
   status?: string;
   publishedAt?: string;
+  /** Note for the reviewer when the change waits for review. */
+  note?: string;
 }
 
 /**
  * Typed wrapper over the ContextOwl REST operations the action uses. Every
  * method targets a single workspace; pass `undefined` for a workspace-bound key.
+ *
+ * A write that can wait for review returns its pending review when the server
+ * answers 202, and null when the server applied the write. Its optional note
+ * goes to the reviewer. Servers without the review reject a note in a request
+ * body, so send it only when `identity` returns `writes`.
  */
 export interface Cowl {
+  /** Describe the key with GET /api/v1/me. Servers before the contract answer 404. */
+  identity(): Promise<KeyIdentity>;
   listArticles(workspace: string | undefined): Promise<RemoteArticle[]>;
   /** List the sidebar sections in sidebar order. Servers before the contract answer 404. */
   listSections(workspace: string | undefined): Promise<RemoteSection[]>;
   getArticleMarkdown(workspace: string | undefined, slug: string): Promise<string>;
   createArticle(workspace: string | undefined, args: CreateArticleArgs): Promise<CreatedArticle>;
-  updateArticle(workspace: string | undefined, args: UpdateArticleArgs): Promise<void>;
+  updateArticle(
+    workspace: string | undefined,
+    args: UpdateArticleArgs,
+  ): Promise<PendingReview | null>;
   createSection(workspace: string | undefined, label: string): Promise<string>;
-  placeArticle(workspace: string | undefined, slug: string, sectionKey: string): Promise<void>;
+  placeArticle(
+    workspace: string | undefined,
+    slug: string,
+    sectionKey: string,
+    note?: string,
+  ): Promise<PendingReview | null>;
   /** List one page of changelog entries. */
   listChangelog(
     workspace: string | undefined,
     query: ChangelogListQuery,
   ): Promise<RemoteChangelog[]>;
-  createChangelog(workspace: string | undefined, args: CreateChangelogArgs): Promise<number>;
-  updateChangelog(workspace: string | undefined, args: UpdateChangelogArgs): Promise<void>;
-  deleteChangelog(workspace: string | undefined, id: number): Promise<void>;
-  attachOpenapi(workspace: string | undefined, spec: string): Promise<OpenapiAttachResult>;
+  createChangelog(
+    workspace: string | undefined,
+    args: CreateChangelogArgs,
+  ): Promise<PendingReview | null>;
+  updateChangelog(
+    workspace: string | undefined,
+    args: UpdateChangelogArgs,
+  ): Promise<PendingReview | null>;
+  deleteChangelog(
+    workspace: string | undefined,
+    id: number,
+    note?: string,
+  ): Promise<PendingReview | null>;
+  attachOpenapi(
+    workspace: string | undefined,
+    spec: string,
+    note?: string,
+  ): Promise<OpenapiAttachResult>;
 }
 
 /** Error raised when a REST operation returns an error response. */

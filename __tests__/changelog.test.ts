@@ -3,8 +3,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { syncChangelog } from "../src/sync/changelog.js";
+import { proposalLine } from "../src/sync/plan.js";
 import { nullLogger } from "../src/logger.js";
-import { CANONICAL_TAGS, FakeCowl, apiError } from "./fake-cowl.js";
+import { CANONICAL_TAGS, FakeCowl, REVIEW_URL, apiError } from "./fake-cowl.js";
 
 function writeChangelog(body: string): string {
   const dir = mkdtempSync(join(tmpdir(), "cowl-cl-"));
@@ -314,5 +315,59 @@ describe("syncChangelog", () => {
       expect(cowl.changelog[0].status).toBe("draft");
       expect(r.warnings.join(" ")).toMatch(/changelog\.publish/);
     }
+  });
+});
+
+describe("syncChangelog under review", () => {
+  const reviewing = () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "review";
+    return cowl;
+  };
+
+  it("files a new published entry and keeps one proposal on the next run", async () => {
+    const cowl = reviewing();
+    const file = writeChangelog("## [1.0.0] - 2024-01-01\nfirst release\n");
+
+    for (let run = 1; run <= 2; run++) {
+      const r = await syncChangelog(cowl, nullLogger, opts(file, { note: "Commit 1a2b3c4" }));
+
+      expect([r.created, r.proposed, r.failed]).toEqual([0, 1, 0]);
+      expect(r.lines).toEqual([
+        `"1.0.0": Publish changelog entry: 1.0.0. Proposal 1 waits for review: ${REVIEW_URL}1`,
+      ]);
+      expect(r.proposals.map(proposalLine)).toEqual(r.lines);
+    }
+    expect(cowl.changelog).toEqual([]);
+    expect(cowl.proposals.size).toBe(1);
+    expect(cowl.notes).toEqual(["Commit 1a2b3c4", "Commit 1a2b3c4"]);
+  });
+
+  it("files a change and the prune of a published entry, and keeps the entries", async () => {
+    const cowl = reviewing();
+    cowl.seedChangelog({ title: "1.0.0", markdown: "old", publishedAt: ISO });
+    cowl.seedChangelog({ title: "0.9.0", markdown: "beta", publishedAt: ISO });
+    const file = writeChangelog("## [1.0.0] - 2024-01-01\nnew\n");
+    const r = await syncChangelog(cowl, nullLogger, opts(file, { prune: true }));
+
+    expect([r.updated, r.deleted, r.proposed, r.failed]).toEqual([0, 0, 2, 0]);
+    expect(r.proposals.map(proposalLine)).toEqual([
+      `"1.0.0": Change changelog entry: 1.0.0. Proposal 1 waits for review: ${REVIEW_URL}1`,
+      `"0.9.0": Delete changelog entry: 0.9.0. Proposal 2 waits for review: ${REVIEW_URL}2`,
+    ]);
+    expect(cowl.changelog.map((e) => [e.title, e.markdown])).toEqual([
+      ["1.0.0", "old"],
+      ["0.9.0", "beta"],
+    ]);
+  });
+
+  it("writes a draft entry at once when the key cannot publish", async () => {
+    const cowl = reviewing();
+    cowl.perms.changelogPublish = false;
+    const file = writeChangelog("## [1.0.0] - 2024-01-01\nfirst\n");
+    const r = await syncChangelog(cowl, nullLogger, opts(file));
+
+    expect([r.created, r.proposed]).toEqual([1, 0]);
+    expect(cowl.changelog[0].status).toBe("draft");
   });
 });

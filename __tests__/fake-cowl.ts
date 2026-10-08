@@ -1,7 +1,8 @@
 // In-memory Cowl gateway for tests. By default it follows the REST contract:
 // canonical changelog tags with their aliases, limit and offset paging, and the
 // real 402 and 403 error bodies, built by the same parser the REST client uses.
-// `legacy: true` simulates a server from before the contract.
+// `legacy: true` simulates a server from before the contract. `writes` turns
+// on the review of agent changes.
 import { errorFromResponse } from "../src/api/client.js";
 import type {
   ChangelogListQuery,
@@ -10,8 +11,10 @@ import type {
   CreateArticleArgs,
   CreateChangelogArgs,
   CreatedArticle,
+  KeyIdentity,
   OpenapiAttachResult,
   OpenapiStats,
+  PendingReview,
   RemoteArticle,
   RemoteChangelog,
   RemoteSection,
@@ -55,6 +58,23 @@ function unplaced(nav: string): boolean {
 
 function live(e: RemoteChangelog): boolean {
   return e.status === "published" && (!e.publishedAt || Date.parse(e.publishedAt) <= Date.now());
+}
+
+/** True when readers see the article, as on the server. */
+function liveArticle(a: RemoteArticle): boolean {
+  return PUBLISHED_STATUSES.has(a.status);
+}
+
+/** The base of the review links of the fake. */
+export const REVIEW_URL = "https://contextowl.test/admin/proposals?ws=docs&id=";
+
+/** A pending proposal: the working copy of the key for one target. */
+export interface FakeProposal {
+  id: number;
+  objectType: string;
+  summary: string;
+  /** The fields of all writes that the proposal holds. */
+  change: Record<string, unknown>;
 }
 
 function changelogOrder(a: RemoteChangelog, b: RemoteChangelog): number {
@@ -135,6 +155,17 @@ export class FakeCowl implements Cowl {
   planIncludesOpenapi = true;
   /** Return the first page for every offset, like a server that ignores offset. */
   ignoreOffset = false;
+  /**
+   * The writes field of GET /api/v1/me on a server with the review of agent
+   * changes. review files a write that changes live content as a proposal
+   * and answers it like a 202. direct applies it. Undefined is a server
+   * without the review: GET /api/v1/me has no writes, and a note in a request
+   * body answers 400 invalid_body.
+   */
+  writes?: "review" | "direct";
+  /** Pending proposals by target. A repeated write of the key updates its proposal. */
+  proposals = new Map<string, FakeProposal>();
+  private nextProposalId = 1;
   perms: FakePerms = {
     articlePublish: true,
     articlePlace: true,
@@ -153,6 +184,8 @@ export class FakeCowl implements Cowl {
   changelogListCalls: ChangelogListQuery[] = [];
   /** Tags exactly as the action sent them, one array per create or update. */
   sentTags: string[][] = [];
+  /** The note of each write that can wait for review, in order. */
+  notes: (string | undefined)[] = [];
   private injected = new Map<keyof Cowl, CowlAPIError[]>();
 
   constructor(options: { legacy?: boolean } = {}) {
@@ -200,6 +233,65 @@ export class FakeCowl implements Cowl {
       if (!out.includes(tag)) out.push(tag);
     }
     return out;
+  }
+
+  /**
+   * Record the note of a write. A server without the review decodes request
+   * bodies strictly, so a note in a body answers 400 and writes nothing. It
+   * ignores an unknown query parameter.
+   */
+  private takeNote(operation: string, note: string | undefined, inBody = true): void {
+    this.notes.push(note);
+    if (note !== undefined && inBody && this.writes === undefined) {
+      throw apiError(operation, 400, {
+        code: "invalid_body",
+        message: 'invalid JSON: json: unknown field "note"',
+      });
+    }
+  }
+
+  /**
+   * File a write as the working copy of the key for target, as the server
+   * does under review. The proposal holds the fields of every write for the
+   * target, so a write that it holds already leaves it unchanged.
+   */
+  private file(
+    objectType: string,
+    target: string,
+    summary: (change: Record<string, unknown>) => string,
+    fields: Record<string, unknown>,
+  ): PendingReview {
+    const pending = this.proposals.get(target);
+    const change = { ...pending?.change, ...fields };
+    let outcome = "created";
+    if (pending) {
+      outcome = JSON.stringify(change) === JSON.stringify(pending.change) ? "unchanged" : "updated";
+    }
+    const proposal = {
+      id: pending?.id ?? this.nextProposalId++,
+      objectType,
+      summary: summary(change),
+      change,
+    };
+    this.proposals.set(target, proposal);
+    return {
+      id: proposal.id,
+      objectType,
+      summary: proposal.summary,
+      outcome,
+      reviewUrl: `${REVIEW_URL}${proposal.id}`,
+    };
+  }
+
+  async identity(): Promise<KeyIdentity> {
+    this.enter("identity");
+    if (this.legacy) {
+      throw apiError("get me", 404, {
+        code: "not_found",
+        message: "no such endpoint: GET /api/v1/me",
+      });
+    }
+    return { writes: this.writes ?? "" };
   }
 
   seedArticle(a: Partial<StoredArticle> & { title: string; markdown: string }): string {
@@ -302,7 +394,10 @@ export class FakeCowl implements Cowl {
     return { slug, nav: this.legacy ? "" : nav };
   }
 
-  async updateArticle(_ws: string | undefined, args: UpdateArticleArgs): Promise<void> {
+  async updateArticle(
+    _ws: string | undefined,
+    args: UpdateArticleArgs,
+  ): Promise<PendingReview | null> {
     this.updateArticleCalls.push({ ...args });
     const fields = [
       args.markdown !== undefined ? "markdown" : "",
@@ -310,6 +405,7 @@ export class FakeCowl implements Cowl {
       args.allowShrink ? "allow_shrink" : "",
     ].filter(Boolean);
     this.enter("updateArticle", `update ${args.slug} ${fields.join(" ")}`.trim());
+    this.takeNote("update article", args.note);
     if (args.allowShrink && this.legacy) {
       throw apiError("update article", 400, {
         code: "invalid_body",
@@ -342,6 +438,29 @@ export class FakeCowl implements Cowl {
         });
       }
     }
+    // Under review, a change to a live article, a publish request, and a
+    // change to an article with a pending proposal of the key file a
+    // proposal. A publish request of a draft always holds its title and text.
+    const target = `article:${a.slug}`;
+    const publishes = args.status !== undefined && PUBLISHED_STATUSES.has(args.status);
+    if (this.writes === "review" && (liveArticle(a) || publishes || this.proposals.has(target))) {
+      const change: Record<string, unknown> =
+        liveArticle(a) || this.proposals.has(target)
+          ? {}
+          : { title: a.title, markdown: a.markdown };
+      for (const key of ["title", "section", "markdown", "status"] as const) {
+        if (args[key] !== undefined) change[key] = args[key];
+      }
+      return this.file(
+        "article",
+        target,
+        (c) =>
+          !liveArticle(a) && typeof c.status === "string" && PUBLISHED_STATUSES.has(c.status)
+            ? `Publish ${a.slug}: ${a.status} to ${c.status}`
+            : `Change ${a.slug}: ${Object.keys(c).join(", ")}`,
+        change,
+      );
+    }
     if (args.title !== undefined) a.title = args.title;
     if (args.section !== undefined) a.section = args.section;
     if (args.markdown !== undefined) a.markdown = args.markdown;
@@ -354,6 +473,7 @@ export class FakeCowl implements Cowl {
       a.nav = first;
       a.section = label;
     }
+    return null;
   }
 
   async createSection(_ws: string | undefined, label: string): Promise<string> {
@@ -373,8 +493,14 @@ export class FakeCowl implements Cowl {
     return key;
   }
 
-  async placeArticle(_ws: string | undefined, slug: string, sectionKey: string): Promise<void> {
+  async placeArticle(
+    _ws: string | undefined,
+    slug: string,
+    sectionKey: string,
+    note?: string,
+  ): Promise<PendingReview | null> {
     this.enter("placeArticle", `place ${slug} ${sectionKey}`);
+    this.takeNote("place article", note);
     if (!this.perms.articlePlace) throw this.denied("place article", "article.place");
     const a = this.articles.get(slug);
     if (!a) throw apiError("place article", 404, { code: "not_found", message: "no such article" });
@@ -385,8 +511,17 @@ export class FakeCowl implements Cowl {
         details: { allowed: [...this.sections.keys()] },
       });
     }
+    if (this.writes === "review" && liveArticle(a)) {
+      return this.file(
+        "placement",
+        `placement:${slug}`,
+        () => `Move ${slug} from ${a.nav} to ${sectionKey}`,
+        { section: sectionKey },
+      );
+    }
     a.nav = sectionKey;
     a.section = unplaced(sectionKey) ? "Unlisted" : (this.sections.get(sectionKey) as string);
+    return null;
   }
 
   async listChangelog(
@@ -431,9 +566,13 @@ export class FakeCowl implements Cowl {
       .map(copy);
   }
 
-  async createChangelog(_ws: string | undefined, args: CreateChangelogArgs): Promise<number> {
+  async createChangelog(
+    _ws: string | undefined,
+    args: CreateChangelogArgs,
+  ): Promise<PendingReview | null> {
     this.sentTags.push([...(args.tags ?? [])]);
     this.enter("createChangelog", `create changelog ${args.title}`);
+    this.takeNote("create changelog", args.note);
     const status = args.status ?? "draft";
     if (status === "published" && !this.perms.changelogPublish) {
       throw this.denied(
@@ -443,18 +582,32 @@ export class FakeCowl implements Cowl {
       );
     }
     const tags = this.normalizeTags("create changelog", args.tags ?? []);
-    return this.seedChangelog({
+    const entry = {
       title: args.title,
       markdown: args.markdown,
       tags,
       status,
       publishedAt: args.publishedAt ?? null,
-    });
+    };
+    if (this.writes === "review" && status === "published") {
+      return this.file(
+        "changelog",
+        `changelog-new:${args.title.trim().toLowerCase()}`,
+        () => `Publish changelog entry: ${args.title}`,
+        entry,
+      );
+    }
+    this.seedChangelog(entry);
+    return null;
   }
 
-  async updateChangelog(_ws: string | undefined, args: UpdateChangelogArgs): Promise<void> {
+  async updateChangelog(
+    _ws: string | undefined,
+    args: UpdateChangelogArgs,
+  ): Promise<PendingReview | null> {
     if (args.tags !== undefined) this.sentTags.push([...args.tags]);
     this.enter("updateChangelog", `update changelog ${args.id}`);
+    this.takeNote("update changelog", args.note);
     if (!this.perms.changelogUpdate) throw this.denied("update changelog", "changelog.update");
     const tags =
       args.tags === undefined ? undefined : this.normalizeTags("update changelog", args.tags);
@@ -472,30 +625,81 @@ export class FakeCowl implements Cowl {
         message: "no such changelog entry",
       });
     }
+    const target = `changelog:${e.id}`;
+    if (
+      this.writes === "review" &&
+      (e.status === "published" || args.status === "published" || this.proposals.has(target))
+    ) {
+      const change: Record<string, unknown> = {};
+      if (args.markdown !== undefined) change.markdown = args.markdown;
+      if (tags !== undefined) change.tags = tags;
+      if (args.publishedAt !== undefined) change.publishedAt = args.publishedAt;
+      if (args.status !== undefined) change.status = args.status;
+      return this.file(
+        "changelog",
+        target,
+        (c) =>
+          e.status !== "published" && c.status === "published"
+            ? `Publish changelog entry: ${e.title}`
+            : `Change changelog entry: ${e.title}`,
+        change,
+      );
+    }
     if (args.markdown !== undefined) e.markdown = args.markdown;
     if (tags !== undefined) e.tags = tags;
     if (args.publishedAt !== undefined) e.publishedAt = args.publishedAt;
     if (args.status !== undefined) e.status = args.status;
+    return null;
   }
 
-  async deleteChangelog(_ws: string | undefined, id: number): Promise<void> {
+  async deleteChangelog(
+    _ws: string | undefined,
+    id: number,
+    note?: string,
+  ): Promise<PendingReview | null> {
     this.enter("deleteChangelog", `delete changelog ${id}`);
+    this.takeNote("delete changelog", note, false);
     if (!this.perms.changelogDelete) throw this.denied("delete changelog", "changelog.delete");
-    if (!this.changelog.some((c) => c.id === id)) {
+    const e = this.changelog.find((c) => c.id === id);
+    if (!e) {
       throw apiError("delete changelog", 404, {
         code: "not_found",
         message: "no such changelog entry",
       });
     }
+    if (this.writes === "review" && e.status === "published") {
+      return this.file("changelog", `changelog:${id}`, () => `Delete changelog entry: ${e.title}`, {
+        delete: true,
+      });
+    }
     this.changelog = this.changelog.filter((c) => c.id !== id);
+    return null;
   }
 
-  async attachOpenapi(_ws: string | undefined, spec: string): Promise<OpenapiAttachResult> {
+  async attachOpenapi(
+    _ws: string | undefined,
+    spec: string,
+    note?: string,
+  ): Promise<OpenapiAttachResult> {
     this.enter("attachOpenapi", "attach openapi");
+    this.takeNote("attach OpenAPI", note);
     if (!this.perms.openapiAttach) throw this.denied("attach OpenAPI", "openapi.attach");
     if (this.legacy && !this.planIncludesOpenapi) throw legacyUpgradeRequired("attach OpenAPI");
-    if (!this.legacy && spec === this.openapiSpec) return { stats: null, unchanged: true };
+    if (!this.legacy && spec === this.openapiSpec) {
+      return { stats: null, unchanged: true, review: null };
+    }
+    if (this.writes === "review") {
+      const s = this.openapiStats;
+      const review = this.file(
+        "openapi",
+        "openapi",
+        () =>
+          `Attach the API reference: ${s.created} new, ${s.updated} changed, ${s.deleted} removed`,
+        { spec },
+      );
+      return { stats: null, unchanged: false, review };
+    }
     this.openapiSpec = spec;
-    return { stats: { ...this.openapiStats }, unchanged: false };
+    return { stats: { ...this.openapiStats }, unchanged: false, review: null };
   }
 }

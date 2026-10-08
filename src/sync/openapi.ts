@@ -4,12 +4,14 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import type { Cowl } from "../types.js";
 import { CowlAPIError, describeError } from "../types.js";
 import type { Logger } from "../logger.js";
-import { type SurfaceResult, emptyResult } from "./plan.js";
+import { type SurfaceResult, addProposed, emptyResult } from "./plan.js";
 
 export interface OpenapiSyncOptions {
   spec: string;
   workspace: string | undefined;
   dryRun: boolean;
+  /** Note for the reviewer when the spec waits for review. */
+  note?: string;
 }
 
 /** Why the server refused the attach, for a 402 or 403 answer. */
@@ -35,8 +37,10 @@ export async function syncOpenapi(
   }
 
   try {
-    const { stats, unchanged } = await cowl.attachOpenapi(opts.workspace, spec);
-    if (unchanged) {
+    const { stats, unchanged, review } = await cowl.attachOpenapi(opts.workspace, spec, opts.note);
+    if (review) {
+      addProposed(result, "OpenAPI spec", [review]);
+    } else if (unchanged) {
       result.skipped++;
       result.lines.push("OpenAPI spec unchanged: kept the generated pages");
     } else if (stats) {

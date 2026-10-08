@@ -8,10 +8,10 @@
 // cannot find. Prune is opt-in and hard-deletes entries whose version is
 // absent from the file.
 import { existsSync, readFileSync } from "node:fs";
-import type { Cowl, RemoteChangelog } from "../types.js";
+import type { Cowl, PendingReview, RemoteChangelog, UpdateChangelogArgs } from "../types.js";
 import { CowlAPIError, describeError } from "../types.js";
 import type { Logger } from "../logger.js";
-import { type SurfaceResult, emptyResult } from "./plan.js";
+import { type SurfaceResult, addProposed, emptyResult } from "./plan.js";
 import { type ParsedChangelogEntry, parseChangelog } from "../util/changelog.js";
 
 export interface ChangelogSyncOptions {
@@ -19,6 +19,8 @@ export interface ChangelogSyncOptions {
   workspace: string | undefined;
   prune: boolean;
   dryRun: boolean;
+  /** Note for the reviewer on each write that can wait for review. */
+  note?: string;
 }
 
 /** Entries per list request: the largest page the server allows. */
@@ -175,16 +177,21 @@ export async function syncChangelog(
     }
   };
 
+  // A published entry that waits for review does not exist until an editor
+  // approves it. The next run sends the create again, and the server keeps
+  // one proposal for the title, so the approval creates one entry.
   const create = async (d: ParsedChangelogEntry): Promise<void> => {
     const base = {
       title: d.version,
       markdown: d.markdown,
       tags: d.tags,
       publishedAt: d.publishedAt,
+      note: opts.note,
     };
     if (publishDenied && draftsHidden) throw new Error(HIDDEN_DRAFT);
+    let review: PendingReview | null;
     try {
-      await cowl.createChangelog(opts.workspace, {
+      review = await cowl.createChangelog(opts.workspace, {
         ...base,
         status: publishDenied ? "draft" : "published",
       });
@@ -194,20 +201,18 @@ export async function syncChangelog(
       }
       denyPublish();
       if (draftsHidden) throw new Error(HIDDEN_DRAFT);
-      await cowl.createChangelog(opts.workspace, base);
+      review = await cowl.createChangelog(opts.workspace, base);
+    }
+    if (review) {
+      addProposed(result, `"${d.version}"`, [review]);
+      return;
     }
     result.lines.push(`created "${d.version}"`);
     result.created++;
   };
 
   const update = async (d: ParsedChangelogEntry, r: RemoteChangelog): Promise<void> => {
-    const patch: {
-      id: number;
-      markdown?: string;
-      tags?: string[];
-      publishedAt?: string;
-      status?: string;
-    } = { id: r.id };
+    const patch: UpdateChangelogArgs = { id: r.id, note: opts.note };
     const reasons: string[] = [];
     if (d.markdown.trim() !== r.markdown.trim()) {
       patch.markdown = d.markdown;
@@ -237,8 +242,9 @@ export async function syncChangelog(
       return;
     }
 
+    let review: PendingReview | null;
     try {
-      await cowl.updateChangelog(opts.workspace, patch);
+      review = await cowl.updateChangelog(opts.workspace, patch);
     } catch (err) {
       if (
         err instanceof CowlAPIError &&
@@ -252,7 +258,7 @@ export async function syncChangelog(
           patch.tags !== undefined ||
           patch.publishedAt !== undefined
         ) {
-          await cowl.updateChangelog(opts.workspace, patch);
+          review = await cowl.updateChangelog(opts.workspace, patch);
         } else {
           result.skipped++;
           return;
@@ -260,6 +266,10 @@ export async function syncChangelog(
       } else {
         throw err;
       }
+    }
+    if (review) {
+      addProposed(result, `"${d.version}"`, [review]);
+      return;
     }
     result.lines.push(`updated "${d.version}"`);
     result.updated++;
@@ -299,7 +309,11 @@ export async function syncChangelog(
       }
       if (deleteDenied) break;
       try {
-        await cowl.deleteChangelog(opts.workspace, e.id);
+        const review = await cowl.deleteChangelog(opts.workspace, e.id, opts.note);
+        if (review) {
+          addProposed(result, `"${e.title}"`, [review]);
+          continue;
+        }
         result.lines.push(`deleted "${e.title}"`);
         result.deleted++;
       } catch (err) {

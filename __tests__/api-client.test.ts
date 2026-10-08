@@ -98,9 +98,11 @@ describe("RestClient", () => {
         markdown: "# Intro",
       }),
     ).resolves.toEqual({ slug: "intro", nav: "guides" });
-    await c.updateArticle(undefined, { slug: "intro", markdown: "Updated", status: "STABLE" });
+    await expect(
+      c.updateArticle(undefined, { slug: "intro", markdown: "Updated", status: "STABLE" }),
+    ).resolves.toBeNull();
     await expect(c.createSection(undefined, "Guides")).resolves.toBe("guides");
-    await c.placeArticle(undefined, "intro", "guides");
+    await expect(c.placeArticle(undefined, "intro", "guides")).resolves.toBeNull();
     await expect(
       c.listChangelog(undefined, { drafts: true, limit: 100, offset: 200 }),
     ).resolves.toMatchObject([{ id: 4, title: "1.0.0" }]);
@@ -111,12 +113,13 @@ describe("RestClient", () => {
         tags: ["new"],
         status: "published",
       }),
-    ).resolves.toBe(4);
-    await c.updateChangelog(undefined, { id: 4, markdown: "Updated" });
-    await c.deleteChangelog(undefined, 4);
+    ).resolves.toBeNull();
+    await expect(c.updateChangelog(undefined, { id: 4, markdown: "Updated" })).resolves.toBeNull();
+    await expect(c.deleteChangelog(undefined, 4)).resolves.toBeNull();
     await expect(c.attachOpenapi(undefined, "openapi: 3.0.0")).resolves.toEqual({
       stats: { created: 3, updated: 1, deleted: 2 },
       unchanged: false,
+      review: null,
     });
 
     const base = "https://contextowl.test/api/v1/workspaces/-";
@@ -178,7 +181,143 @@ describe("RestClient", () => {
     await expect(client().attachOpenapi(undefined, "openapi: 3.0.0")).resolves.toEqual({
       stats: null,
       unchanged: true,
+      review: null,
     });
+  });
+
+  it("sends note on each write that can wait for review", async () => {
+    const calls = stubFetch([
+      json({ slug: "intro" }),
+      json({ slug: "intro", section: "guides" }),
+      json({ id: 4 }, 201),
+      json({ id: 4 }),
+      json({ deleted: 4 }),
+      json({ stats: { created: 1, updated: 0, deleted: 0 } }),
+    ]);
+    const c = client();
+    const note =
+      "Fix the steps. Commit 1a2b3c4 in acme/docs: https://github.com/acme/docs/commit/1a2b3c4";
+
+    await c.updateArticle(undefined, { slug: "intro", status: "STABLE", note });
+    await c.placeArticle(undefined, "intro", "guides", note);
+    await c.createChangelog(undefined, { title: "1.0.0", markdown: "x", note });
+    await c.updateChangelog(undefined, { id: 4, markdown: "y", note });
+    await c.deleteChangelog(undefined, 4, note);
+    await c.attachOpenapi(undefined, "openapi: 3.0.0", note);
+
+    const base = "https://contextowl.test/api/v1/workspaces/-";
+    const sent = JSON.stringify(note);
+    expect(calls.map(({ url, method, body }) => ({ url, method, body }))).toEqual([
+      {
+        url: `${base}/articles/intro`,
+        method: "PATCH",
+        body: `{"status":"STABLE","note":${sent}}`,
+      },
+      {
+        url: `${base}/articles/intro/placement`,
+        method: "POST",
+        body: `{"section":"guides","note":${sent}}`,
+      },
+      {
+        url: `${base}/changelog`,
+        method: "POST",
+        body: `{"title":"1.0.0","markdown":"x","note":${sent}}`,
+      },
+      { url: `${base}/changelog/4`, method: "PATCH", body: `{"markdown":"y","note":${sent}}` },
+      {
+        url: `${base}/changelog/4?${new URLSearchParams({ note })}`,
+        method: "DELETE",
+        body: undefined,
+      },
+      {
+        url: `${base}/openapi`,
+        method: "PUT",
+        body: `{"spec":"openapi: 3.0.0","note":${sent}}`,
+      },
+    ]);
+    expect(new URL(calls[4].url).searchParams.get("note")).toBe(note);
+  });
+
+  it("returns the proposal of each write that the server answers with 202", async () => {
+    const pending = (id: number, objectType: string, summary: string) =>
+      json(
+        {
+          pendingReview: true,
+          message: "An editor must approve this change before readers see it.",
+          proposal: {
+            id,
+            objectType,
+            status: "pending",
+            target: `${objectType}:7`,
+            summary,
+            reviewUrl: `https://contextowl.test/admin/proposals?ws=docs&id=${id}`,
+            baseRevision: "a1b2c3d4e5f6",
+            outcome: "created",
+          },
+        },
+        202,
+      );
+    stubFetch([
+      pending(1, "article", "Publish intro: DRAFT to STABLE"),
+      pending(2, "placement", "Move intro from guides to reference"),
+      pending(3, "changelog", "Publish changelog entry: 1.0.0"),
+      pending(4, "changelog", "Change changelog entry: 1.0.0"),
+      pending(5, "changelog", "Delete changelog entry: 1.0.0"),
+      pending(6, "openapi", "Sync the API reference: 1 new, 0 changed, 0 removed"),
+    ]);
+    const c = client();
+    const review = (id: number, objectType: string, summary: string) => ({
+      id,
+      objectType,
+      summary,
+      outcome: "created",
+      reviewUrl: `https://contextowl.test/admin/proposals?ws=docs&id=${id}`,
+    });
+
+    await expect(c.updateArticle(undefined, { slug: "intro", status: "STABLE" })).resolves.toEqual(
+      review(1, "article", "Publish intro: DRAFT to STABLE"),
+    );
+    await expect(c.placeArticle(undefined, "intro", "reference")).resolves.toEqual(
+      review(2, "placement", "Move intro from guides to reference"),
+    );
+    await expect(
+      c.createChangelog(undefined, { title: "1.0.0", markdown: "x", status: "published" }),
+    ).resolves.toEqual(review(3, "changelog", "Publish changelog entry: 1.0.0"));
+    await expect(c.updateChangelog(undefined, { id: 4, markdown: "y" })).resolves.toEqual(
+      review(4, "changelog", "Change changelog entry: 1.0.0"),
+    );
+    await expect(c.deleteChangelog(undefined, 4)).resolves.toEqual(
+      review(5, "changelog", "Delete changelog entry: 1.0.0"),
+    );
+    await expect(c.attachOpenapi(undefined, "openapi: 3.0.0")).resolves.toEqual({
+      stats: null,
+      unchanged: false,
+      review: review(6, "openapi", "Sync the API reference: 1 new, 0 changed, 0 removed"),
+    });
+  });
+
+  it("reads a 202 answer without the proposal fields", async () => {
+    stubFetch([json({}, 202), () => new Response(null, { status: 202 })]);
+    const empty = { id: 0, objectType: "", summary: "", outcome: "", reviewUrl: "" };
+
+    await expect(client().updateArticle(undefined, { slug: "intro", title: "x" })).resolves.toEqual(
+      empty,
+    );
+    await expect(client().deleteChangelog(undefined, 4)).resolves.toEqual(empty);
+  });
+
+  it("reads writes from GET /api/v1/me, and an empty value when the server has none", async () => {
+    const calls = stubFetch([
+      json({ name: "ci", writes: "review", publishingKey: false }),
+      json({ name: "ci", permissions: ["article.read"] }),
+    ]);
+
+    await expect(client().identity()).resolves.toEqual({ writes: "review" });
+    await expect(client().identity()).resolves.toEqual({ writes: "" });
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      "GET https://contextowl.test/api/v1/me",
+      "GET https://contextowl.test/api/v1/me",
+    ]);
   });
 
   it("reads the code, message, and details of an error response", async () => {
@@ -243,7 +382,9 @@ describe("RestClient", () => {
     ]);
     const c = new RestClient("https://contextowl.test/api/v1", "cowl_pat_test", { sleep });
 
-    await expect(c.createChangelog(undefined, { title: "1.0.0", markdown: "x" })).resolves.toBe(7);
+    await expect(
+      c.createChangelog(undefined, { title: "1.0.0", markdown: "x" }),
+    ).resolves.toBeNull();
     expect(calls).toHaveLength(2);
     expect(sleep).toHaveBeenCalledWith(2000);
   });

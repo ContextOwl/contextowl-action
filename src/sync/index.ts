@@ -37,11 +37,41 @@ async function runSurface(
   return r;
 }
 
+/** The hint for a key whose changes to live content wait for review. */
+export const REVIEW_HINT =
+  "The organization reviews agent changes, so changes to live content wait in Admin > Proposals until an editor approves them. To publish on merge, ask an admin to approve this key as a publishing key.";
+
+/**
+ * The note to send with each write that can wait for review. A server with
+ * the review of agent changes returns writes from GET /api/v1/me and accepts
+ * the note. Older servers reject an unknown field in a request body, so they
+ * get no note. The identity is a convenience, so an error only drops the note.
+ */
+async function reviewNote(
+  cowl: Cowl,
+  logger: Logger,
+  note: string | undefined,
+): Promise<string | undefined> {
+  let writes: string;
+  try {
+    writes = (await cowl.identity()).writes;
+  } catch {
+    return undefined;
+  }
+  if (writes === "review") logger.info(REVIEW_HINT);
+  return writes ? note : undefined;
+}
+
+/**
+ * Run the configured surfaces. `note` names the commit for the reviewer. The
+ * surfaces send it only to a server that accepts it.
+ */
 export async function runSync(
   cowl: Cowl,
   logger: Logger,
   cfg: ResolvedConfig,
   root: string,
+  note?: string,
 ): Promise<SurfaceResult[]> {
   const docsDir = cfg.docs ? resolve(root, cfg.docs.dir) : undefined;
   const changelogFile = cfg.changelog ? resolve(root, cfg.changelog.file) : undefined;
@@ -63,6 +93,7 @@ export async function runSync(
     );
   }
 
+  const sentNote = await reviewNote(cowl, logger, note);
   const results: SurfaceResult[] = [];
 
   if (docsDir) {
@@ -74,6 +105,7 @@ export async function runSync(
           prune: cfg.prune,
           dryRun: cfg.dryRun,
           allowShrink: cfg.allowShrink,
+          note: sentNote,
         }),
       ),
     );
@@ -87,6 +119,7 @@ export async function runSync(
           workspace: cfg.workspace,
           prune: cfg.prune,
           dryRun: cfg.dryRun,
+          note: sentNote,
         }),
       ),
     );
@@ -99,6 +132,7 @@ export async function runSync(
           spec: openapiSpec,
           workspace: cfg.workspace,
           dryRun: cfg.dryRun,
+          note: sentNote,
         }),
       ),
     );

@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { syncDocs } from "../src/sync/docs.js";
-import { jobFailure } from "../src/sync/plan.js";
+import { jobFailure, proposalLine } from "../src/sync/plan.js";
 import { nullLogger } from "../src/logger.js";
-import { FakeCowl, apiError, upgradeRequired } from "./fake-cowl.js";
+import { FakeCowl, REVIEW_URL, apiError, upgradeRequired } from "./fake-cowl.js";
 
 function writeTree(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "cowl-docs-"));
@@ -617,5 +617,153 @@ describe("syncDocs", () => {
 
     expect(r.created).toBe(1);
     expect(cowl.articles.size).toBe(0);
+  });
+});
+
+describe("syncDocs under review", () => {
+  const reviewing = () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "review";
+    return cowl;
+  };
+
+  it("creates a new article as a draft and counts its publish as proposed", async () => {
+    const cowl = reviewing();
+    const dir = writeTree({ "guides/intro.md": "---\ntitle: Intro\nstatus: STABLE\n---\nhello" });
+    const r = await syncDocs(cowl, nullLogger, opts(dir));
+
+    expect([r.created, r.proposed, r.failed]).toEqual([0, 1, 0]);
+    expect(jobFailure([r], true)).toBeUndefined();
+    expect(cowl.articles.get("intro")).toMatchObject({
+      status: "DRAFT",
+      nav: "guides",
+      markdown: "hello",
+    });
+    const waiting = `"Intro": Publish intro: DRAFT to STABLE. Proposal 1 waits for review: ${REVIEW_URL}1`;
+    expect(r.lines).toEqual(['created "Intro" in Guides as a draft', waiting]);
+    expect(r.proposals.map(proposalLine)).toEqual([waiting]);
+  });
+
+  it("files a change to a live article and keeps one proposal on the next run", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", section: "Guides", status: "STABLE", markdown: "hello" });
+    const dir = writeTree({ "guides/intro.md": "---\ntitle: Intro\nstatus: STABLE\n---\nnew" });
+
+    for (let run = 1; run <= 2; run++) {
+      const r = await syncDocs(cowl, nullLogger, opts(dir));
+
+      expect([r.updated, r.skipped, r.proposed, r.failed]).toEqual([0, 0, 1, 0]);
+      expect(r.proposals.map(proposalLine)).toEqual([
+        `"Intro": Change intro: markdown. Proposal 1 waits for review: ${REVIEW_URL}1`,
+      ]);
+    }
+    expect(cowl.proposals.size).toBe(1);
+    expect(cowl.articles.get("intro")!.markdown).toBe("hello");
+  });
+
+  it("lists each proposal of an article once, with the answer to its last write", async () => {
+    const cowl = reviewing();
+    cowl.sections.set("reference", "Reference");
+    cowl.seedArticle({ title: "Setup", section: "Guides", status: "STABLE", markdown: "old" });
+    const dir = writeTree({
+      "setup.md": "---\ntitle: Setup\nsection: Reference\nstatus: DEPRECATED\n---\nnew",
+    });
+    const r = await syncDocs(cowl, nullLogger, opts(dir));
+
+    expect([r.updated, r.proposed, r.failed]).toEqual([0, 1, 0]);
+    expect(cowl.log).toEqual([
+      "update setup markdown",
+      "place setup reference",
+      "update setup status=DEPRECATED",
+    ]);
+    expect(r.proposals.map(proposalLine)).toEqual([
+      `"Setup": Change setup: markdown, status. Proposal 1 waits for review: ${REVIEW_URL}1`,
+      `"Setup": Move setup from guides to reference. Proposal 2 waits for review: ${REVIEW_URL}2`,
+    ]);
+    // The move waits, so the article keeps its place and its label.
+    expect(cowl.articles.get("setup")).toMatchObject({
+      section: "Guides",
+      nav: "guides",
+      status: "STABLE",
+    });
+  });
+
+  it("asks for a move again on each run while it waits for review", async () => {
+    const cowl = reviewing();
+    cowl.sections.set("reference", "Reference");
+    cowl.seedArticle({ title: "Setup", section: "Guides", status: "STABLE", markdown: "same" });
+    const dir = writeTree({ "setup.md": "---\ntitle: Setup\nsection: Reference\n---\nsame" });
+
+    for (let run = 1; run <= 2; run++) {
+      cowl.log = [];
+      const r = await syncDocs(cowl, nullLogger, opts(dir));
+
+      expect([r.updated, r.proposed]).toEqual([0, 1]);
+      expect(cowl.log).toEqual(["place setup reference"]);
+      expect(cowl.updateArticleCalls).toEqual([]);
+    }
+    expect(cowl.proposals.size).toBe(1);
+  });
+
+  it("files the prune of a live article and keeps the article", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", markdown: "hello" });
+    cowl.seedArticle({ title: "Old", markdown: "gone" });
+    const dir = writeTree({ "guides/intro.md": "---\ntitle: Intro\n---\nhello" });
+    const r = await syncDocs(cowl, nullLogger, opts(dir, { prune: true }));
+
+    expect([r.deleted, r.skipped, r.proposed]).toEqual([0, 1, 1]);
+    expect(r.proposals.map(proposalLine)).toEqual([
+      `"Old": Change old: status. Proposal 1 waits for review: ${REVIEW_URL}1`,
+    ]);
+    expect(cowl.articles.get("old")!.status).toBe("STABLE");
+  });
+
+  it("writes a draft at once", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Draft", status: "DRAFT", markdown: "old" });
+    const dir = writeTree({ "guides/draft.md": "---\ntitle: Draft\n---\nnew" });
+    const r = await syncDocs(cowl, nullLogger, opts(dir));
+
+    expect([r.updated, r.proposed]).toEqual([1, 0]);
+    expect(r.proposals).toEqual([]);
+    expect(cowl.articles.get("draft")!.markdown).toBe("new");
+  });
+
+  it("counts an article as updated when the key publishes directly", async () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "direct";
+    cowl.seedArticle({ title: "Intro", status: "STABLE", markdown: "hello" });
+    const dir = writeTree({ "guides/intro.md": "---\ntitle: Intro\n---\nnew" });
+    const r = await syncDocs(cowl, nullLogger, opts(dir, { note: "Commit 1a2b3c4" }));
+
+    expect([r.updated, r.proposed]).toEqual([1, 0]);
+    expect(cowl.articles.get("intro")!.markdown).toBe("new");
+  });
+
+  it("sends the note with each write that can wait for review", async () => {
+    const cowl = reviewing();
+    cowl.sections.set("reference", "Reference");
+    cowl.seedArticle({ title: "Setup", section: "Guides", status: "STABLE", markdown: "old" });
+    cowl.seedArticle({ title: "Old", markdown: "gone" });
+    const dir = writeTree({
+      "setup.md": "---\ntitle: Setup\nsection: Reference\n---\nnew",
+      "tutorials/intro.md": "---\ntitle: Intro\nstatus: STABLE\n---\nhello",
+    });
+    const note = "Fix the setup. Commit 1a2b3c4 in acme/docs: https://github.com/acme/docs";
+    const r = await syncDocs(cowl, nullLogger, opts(dir, { prune: true, note }));
+
+    expect([r.proposed, r.failed]).toEqual([3, 0]);
+    // The create of the article and of its section take no note.
+    expect(cowl.log).toEqual([
+      "create Intro",
+      "section Tutorials",
+      "place intro tutorials",
+      "update intro status=STABLE",
+      "update setup markdown",
+      "place setup reference",
+      "update old status=DEPRECATED",
+    ]);
+    expect(cowl.notes).toEqual([note, note, note, note, note]);
   });
 });

@@ -10,8 +10,12 @@ has the complete setup, configuration, permissions, and sync reference.
 ## Quick start
 
 1. Create an agent key in **Admin > Settings > API**. Bind it to one workspace.
-2. Store the key in a repository secret named `CONTEXTOWL_PAT`.
-3. Add `.contextowl.yml` to the repository root:
+2. If your organization reviews agent changes, select **Publish directly** when
+   you create the key, or **Approve publishing** on its row. New organizations
+   review agent changes. Without the approval, each publish waits in
+   **Admin > Proposals**. See [Review](#review).
+3. Store the key in a repository secret named `CONTEXTOWL_PAT`.
+4. Add `.contextowl.yml` to the repository root:
 
    ```yaml
    docs:
@@ -22,7 +26,7 @@ has the complete setup, configuration, permissions, and sync reference.
      spec: openapi.yaml
    ```
 
-4. Add `.github/workflows/contextowl.yml`:
+5. Add `.github/workflows/contextowl.yml`:
 
    ```yaml
    name: Publish to ContextOwl
@@ -57,9 +61,10 @@ action reads the key from the `token` input, so you choose the secret name.
 
 ## Outputs
 
-`created`, `updated`, `deleted`, `skipped`, and `failed` hold the totals for all
-surfaces. A surface that stops before it finishes counts as 1 in `failed`. The
-action also writes a summary table to the workflow run.
+`created`, `updated`, `deleted`, `skipped`, `failed`, and `proposed` hold the
+totals for all surfaces. A surface that stops before it finishes counts as 1 in
+`failed`. `proposed` counts the items with a change that waits for review. See
+[Review](#review). The action also writes a summary table to the workflow run.
 
 ## Front matter
 
@@ -143,6 +148,42 @@ failed item.
 
 To accept such a change, set `allow-shrink: true`. The action then sends the
 body again with `allow_shrink` and logs a warning.
+
+## Review
+
+An organization can review agent changes. When the review is on and the key is
+not a publishing key, the server answers `202` to these writes. The change then
+waits in **Admin > Proposals** until an editor approves it:
+
+- A change to a published article, the publish of a draft, and the move of a
+  published article.
+- A new published changelog entry, a change to a published entry, and the
+  publish of a draft entry.
+- The prune of a published article or changelog entry.
+- An OpenAPI spec that changes the API reference.
+
+New drafts and new sections still sync at once. The action counts an item with
+a change that waits as proposed, not as created, updated, or removed. A new
+article whose publish waits also counts as proposed. Its draft already exists
+in the app. The job summary lists each proposal with its review link, for
+example:
+
+```text
+"Getting Started": Publish getting-started: DRAFT to STABLE. Proposal 42 waits for review: https://contextowl.co/admin/proposals?ws=docs&id=42
+```
+
+A change that waits does not fail the job. The next run sends the same change
+again, and the server keeps one proposal for it. An article whose move waits
+keeps its section until an editor approves the move.
+
+Each write that can wait for review sends a note for the reviewer: the subject
+of the pushed commit and a link to the commit. The action reads
+`GET /api/v1/me` first and sends the note only when the server returns
+`writes`, because older servers reject an unknown field. When the changes of
+the key wait for review, the action logs a hint at the start of the run.
+
+To publish on every merge, approve the key as a publishing key in
+**Admin > Settings > API**.
 
 ## Sync behavior
 

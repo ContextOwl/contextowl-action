@@ -5,8 +5,17 @@ import * as core from "@actions/core";
 import { type ActionInputs, resolveConfig } from "./config.js";
 import type { Logger } from "./logger.js";
 import { RestClient } from "./api/client.js";
+import { commitNote } from "./note.js";
 import { runSync } from "./sync/index.js";
-import { type SurfaceResult, count, jobFailure, totals } from "./sync/plan.js";
+import {
+  type SurfaceResult,
+  count,
+  jobFailure,
+  proposalHtml,
+  summaryTable,
+  totals,
+  totalsLine,
+} from "./sync/plan.js";
 
 const logger: Logger = {
   info: (m) => core.info(m),
@@ -36,7 +45,13 @@ async function run(): Promise<void> {
   core.info(`ContextOwl API: ${cfg.apiUrl}`);
   if (cfg.dryRun) core.info("Dry run: no changes will be made.");
 
-  const results = await runSync(new RestClient(cfg.apiUrl, cfg.token), logger, cfg, root);
+  const results = await runSync(
+    new RestClient(cfg.apiUrl, cfg.token),
+    logger,
+    cfg,
+    root,
+    commitNote(process.env),
+  );
 
   const t = totals(results);
   core.setOutput("created", t.created);
@@ -44,15 +59,10 @@ async function run(): Promise<void> {
   core.setOutput("deleted", t.deleted);
   core.setOutput("skipped", t.skipped);
   core.setOutput("failed", t.failed);
+  core.setOutput("proposed", t.proposed);
 
-  const warnings = results.flatMap((r) => r.warnings);
   await writeSummary(results, cfg.dryRun);
-
-  const verb = cfg.dryRun ? "Planned" : "Applied";
-  core.info(
-    `${verb}: ${t.created} created, ${t.updated} updated, ${t.deleted} removed, ${t.skipped} unchanged, ${t.failed} failed` +
-      (warnings.length ? `, ${count(warnings.length, "warning")}` : ""),
-  );
+  core.info(totalsLine(results, cfg.dryRun));
 
   const failure = jobFailure(results, cfg.failOnError);
   if (failure) {
@@ -66,36 +76,17 @@ async function run(): Promise<void> {
 
 async function writeSummary(results: SurfaceResult[], dryRun: boolean): Promise<void> {
   if (!process.env.GITHUB_STEP_SUMMARY) return;
-  const t = totals(results);
-  core.summary.addHeading(`ContextOwl ${dryRun ? "(dry run)" : "publish"}`, 2).addTable([
-    [
-      { data: "Surface", header: true },
-      { data: "Created", header: true },
-      { data: "Updated", header: true },
-      { data: "Removed", header: true },
-      { data: "Unchanged", header: true },
-      { data: "Failed", header: true },
-    ],
-    ...results.map((r) => [
-      r.stopped ? `${r.surface} (stopped)` : r.surface,
-      String(r.created),
-      String(r.updated),
-      String(r.deleted),
-      String(r.skipped),
-      String(r.failed),
-    ]),
-    [
-      "total",
-      String(t.created),
-      String(t.updated),
-      String(t.deleted),
-      String(t.skipped),
-      String(t.failed),
-    ],
-  ]);
+  const [header, ...rows] = summaryTable(results);
+  core.summary
+    .addHeading(`ContextOwl ${dryRun ? "(dry run)" : "publish"}`, 2)
+    .addTable([header.map((data) => ({ data, header: true })), ...rows]);
   const failures = results.flatMap((r) => r.failures);
   if (failures.length) {
     core.summary.addHeading("Failures", 3).addList(failures);
+  }
+  const proposals = results.flatMap((r) => r.proposals);
+  if (proposals.length) {
+    core.summary.addHeading("Waiting for review", 3).addList(proposals.map(proposalHtml));
   }
   const warnings = results.flatMap((r) => r.warnings);
   if (warnings.length) {
