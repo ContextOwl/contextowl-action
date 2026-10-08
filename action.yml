@@ -7,7 +7,7 @@ branding:
 
 inputs:
   token:
-    description: "ContextOwl agent key. It starts with cowl_pat_. Pass it from an encrypted secret, for example secrets.CONTEXTOWL_PAT."
+    description: "ContextOwl agent key. It starts with cowl_pat_. Pass it from an encrypted secret, for example secrets.CONTEXTOWL_PAT. When the organization reviews agent changes, approve the key as a publishing key in Admin > Settings > API. Without the approval, changes to live content wait in Admin > Proposals."
     required: true
   server-url:
     description: "Base URL of your ContextOwl instance. The action appends /api/v1."
@@ -49,6 +49,8 @@ outputs:
     description: "Number of unchanged items skipped."
   failed:
     description: "Number of items that failed to sync. A surface that stops before it finishes, for example after a rejected key, counts as 1."
+  proposed:
+    description: "Number of items with a change that waits for review in Admin > Proposals. The server answers 202 to such a change when the organization reviews agent changes and the key is not a publishing key. These items count in no other output."
 
 runs:
   using: "node24"

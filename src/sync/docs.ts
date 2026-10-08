@@ -10,13 +10,15 @@ import { join } from "node:path";
 import type {
   Cowl,
   CreatedArticle,
+  PendingReview,
   RemoteArticle,
   RemoteSection,
   UpdateArticleArgs,
 } from "../types.js";
 import { CowlAPIError, describeError } from "../types.js";
 import type { Logger } from "../logger.js";
-import { type SurfaceResult, emptyResult } from "./plan.js";
+import { type SurfaceResult, addProposed, emptyResult } from "./plan.js";
+import type { ReviewState } from "./review.js";
 import { walkMarkdown } from "../util/walk.js";
 import { type DesiredArticle, parseArticle } from "../util/markdown.js";
 import { mapLimit } from "../util/concurrency.js";
@@ -29,9 +31,18 @@ export interface DocsSyncOptions {
   dryRun: boolean;
   /** Accept a body that the server refuses as a large removal. */
   allowShrink: boolean;
+  /** Note for the reviewer on each write that can wait for review. */
+  note?: string;
+  /** Set when the changes of the key to live content wait for review. */
+  review?: ReviewState;
 }
 
 const READ_CONCURRENCY = 5;
+
+/** Keep the pending review of a write. A write that the server applied has none. */
+function keep(reviews: PendingReview[], review: PendingReview | null): void {
+  if (review) reviews.push(review);
+}
 
 /** True when `nav` holds a sidebar section key. Unplaced articles have `none` or "". */
 function isPlaced(nav: string): boolean {
@@ -131,12 +142,30 @@ function placeRefusedWarning(err: CowlAPIError, titles: readonly string[]): stri
   );
 }
 
+/**
+ * What a large removal removes. Under review, the server measures the body
+ * against the pending proposal of the key when that proposal changes the
+ * text, and `details.proposalId` names it.
+ */
 function removalText(err: CowlAPIError): string {
   const removed = num(err.details.removed, -1);
   const current = num(err.details.currentLength, -1);
-  return removed >= 0 && current > 0
-    ? `the new body removes ${removed} of ${current} characters`
-    : "the new body removes most of the current text";
+  const proposal = num(err.details.proposalId, 0);
+  if (removed < 0 || current <= 0) {
+    return proposal > 0
+      ? `the new body removes most of the text of pending proposal ${proposal} of this key`
+      : "the new body removes most of the current text";
+  }
+  return proposal > 0
+    ? `the new body removes ${removed} of the ${current} characters of pending proposal ${proposal} of this key, not of the live page`
+    : `the new body removes ${removed} of ${current} characters`;
+}
+
+function removalRemedy(err: CowlAPIError): string {
+  const proposal = num(err.details.proposalId, 0);
+  return proposal > 0
+    ? `To accept it, reject proposal ${proposal} in Admin > Proposals or set the allow-shrink input to true`
+    : "To accept it, set the allow-shrink input to true";
 }
 
 export async function syncDocs(
@@ -219,11 +248,22 @@ export async function syncDocs(
     }
   });
 
+  // Returns false when the key lacks article.publish. A status change that
+  // waits for review adds its review to reviews. text holds the title and
+  // the body that the write also sends.
   let publishDenied = false;
-  const setStatus = async (slug: string, status: string): Promise<boolean> => {
+  const setStatus = async (
+    slug: string,
+    status: string,
+    reviews: PendingReview[],
+    text: Partial<UpdateArticleArgs> = {},
+  ): Promise<boolean> => {
     if (publishDenied) return false;
     try {
-      await cowl.updateArticle(opts.workspace, { slug, status });
+      keep(
+        reviews,
+        await cowl.updateArticle(opts.workspace, { ...text, slug, status, note: opts.note }),
+      );
       return true;
     } catch (err) {
       if (err instanceof CowlAPIError && err.isPermissionDenied("article.publish")) {
@@ -261,17 +301,23 @@ export async function syncDocs(
 
   // A 403 means that the key lacks article.place, so the run sends no more
   // placement requests. A 402 refuses only a section that is not public, so
-  // the run still tries to move the other articles.
+  // the run still tries to move the other articles. Returns true when the
+  // article moved. A move that waits for review adds its review to reviews.
   let placeRefusal: CowlAPIError | undefined;
   let placeDenied = false;
   const unmoved: string[] = [];
-  const placeInSection = async (d: DesiredArticle, slug: string): Promise<boolean> => {
+  const placeInSection = async (
+    d: DesiredArticle,
+    slug: string,
+    reviews: PendingReview[],
+  ): Promise<boolean> => {
     if (!placeDenied) {
       const key = await sectionKeyFor(d.section);
       if (!key) return false;
       try {
-        await cowl.placeArticle(opts.workspace, slug, key);
-        return true;
+        const review = await cowl.placeArticle(opts.workspace, slug, key, opts.note);
+        keep(reviews, review);
+        return review === null;
       } catch (err) {
         if (!isRefusal(err)) throw err;
         if (!placeRefusal) placeRefusal = err;
@@ -309,32 +355,67 @@ export async function syncDocs(
     }
   };
 
+  // Under review, a write changes the working copy of the key, and a field
+  // that the write leaves out keeps its value there. When the key has a
+  // pending proposal for an article, the first write for the article sends
+  // the repository state. That state is the title, the body, and the live
+  // status when the repository asks for no other status. The later writes of
+  // the run then change a working copy that holds only the repository state.
+  // A body that equals the live body goes as the live text with allow_shrink,
+  // because the server measures a removal against the working copy. Other
+  // writes send only the changed fields, so a run never sends a body that it
+  // did not change.
+  const review = opts.review;
+  const repositoryState = (
+    d: DesiredArticle,
+    r: RemoteArticle,
+    body: string | null,
+    statusChanged: boolean,
+  ): Partial<UpdateArticleArgs> => {
+    const same = body !== null && body.trim() === d.markdown.trim();
+    const state: Partial<UpdateArticleArgs> = {
+      title: d.title,
+      markdown: same ? body : d.markdown,
+    };
+    if (same) state.allowShrink = true;
+    if (!statusChanged && review?.articlePublish && !publishDenied && r.status) {
+      state.status = r.status;
+    }
+    return state;
+  };
+
   // The server refuses a body that removes most of an article (large_removal),
   // which guards against a broken file. The action sends the body again with
-  // allow_shrink only when allow-shrink is true. It never sends allow_shrink
-  // first, because servers before the contract reject the unknown field.
-  const patchArticle = async (d: DesiredArticle, patch: UpdateArticleArgs): Promise<void> => {
+  // allow_shrink only when allow-shrink is true. Outside the review, it never
+  // sends allow_shrink first, because servers before the contract reject the
+  // unknown field.
+  const patchArticle = async (
+    d: DesiredArticle,
+    patch: UpdateArticleArgs,
+  ): Promise<PendingReview | null> => {
     try {
-      await cowl.updateArticle(opts.workspace, patch);
+      return await cowl.updateArticle(opts.workspace, patch);
     } catch (err) {
       if (!(err instanceof CowlAPIError) || err.code !== "large_removal") throw err;
       if (patch.markdown === undefined) throw err;
       if (!opts.allowShrink) {
         throw new CowlAPIError(
           err.operation,
-          `${removalText(err)}. To accept it, set the allow-shrink input to true`,
+          `${removalText(err)}. ${removalRemedy(err)}`,
           err.status,
           err.code,
           err.details,
         );
       }
       warn(`"${d.title}": ${removalText(err)}. The action sends it with allow_shrink.`);
-      await cowl.updateArticle(opts.workspace, { ...patch, allowShrink: true });
+      return cowl.updateArticle(opts.workspace, { ...patch, allowShrink: true });
     }
   };
 
   // Creates. Placement comes before the status change, because publishing an
-  // unplaced article puts it in the first sidebar section.
+  // unplaced article puts it in the first sidebar section. The new article is
+  // a draft, so only its publish can wait for review. It then counts as
+  // proposed, not as created.
   for (const d of creates) {
     if (opts.dryRun) {
       result.lines.push(`create "${d.title}" in ${d.section} (${d.sourceRel})`);
@@ -342,13 +423,21 @@ export async function syncDocs(
       continue;
     }
     try {
+      const reviews: PendingReview[] = [];
       const known = sectionKeys.get(labelKey(d.section));
       const created = await createArticle(d, known);
       const placed =
-        (known !== undefined && created.nav === known) || (await placeInSection(d, created.slug));
-      if (d.status && d.status !== "DRAFT") await setStatus(created.slug, d.status);
-      result.lines.push(placed ? `created "${d.title}" in ${d.section}` : `created "${d.title}"`);
-      result.created++;
+        (known !== undefined && created.nav === known) ||
+        (await placeInSection(d, created.slug, reviews));
+      if (d.status && d.status !== "DRAFT") await setStatus(created.slug, d.status, reviews);
+      const line = placed ? `created "${d.title}" in ${d.section}` : `created "${d.title}"`;
+      if (reviews.length > 0) {
+        result.lines.push(`${line} as a draft`);
+        addProposed(result, `"${d.title}"`, reviews);
+      } else {
+        result.lines.push(line);
+        result.created++;
+      }
     } catch (err) {
       fail(`create "${d.title}" failed: ${describeError(err)}`);
     }
@@ -358,7 +447,7 @@ export async function syncDocs(
   for (let i = 0; i < candidates.length; i++) {
     const { d, remote: r } = candidates[i];
     const body = bodies[i];
-    const patch: UpdateArticleArgs = { slug: r.slug };
+    const patch: UpdateArticleArgs = { slug: r.slug, note: opts.note };
     const reasons: string[] = [];
     if (body === null || body.trim() !== d.markdown.trim()) {
       patch.markdown = d.markdown;
@@ -368,14 +457,23 @@ export async function syncDocs(
       patch.title = d.title;
       reasons.push("title");
     }
+    const edited = reasons.length > 0;
     const sectionChanged = labelKey(d.section) !== labelKey(r.section);
     if (sectionChanged) reasons.push("section");
     // An earlier run can create an article and then fail to place it. The
     // article keeps its section label, so only its nav shows the gap.
     const needsPlacement = sectionChanged || !isPlaced(r.nav);
     const statusChanged = !!d.status && d.status !== r.status;
+    // Under review, the key can have a pending proposal from an earlier run
+    // with a change that the repository no longer has. The repository state
+    // then brings the proposal in line, or withdraws it when the article
+    // equals the live article. A move into the section that holds the
+    // article withdraws a pending move of the key.
+    const pendingChange = review?.pending?.articles.has(r.slug) ?? false;
+    const pendingMove = !needsPlacement && (review?.pending?.placements.has(r.slug) ?? false);
+    const changed = reasons.length > 0 || needsPlacement || statusChanged;
 
-    if (reasons.length === 0 && !needsPlacement && !statusChanged) {
+    if (!changed && (opts.dryRun || (!pendingChange && !pendingMove))) {
       result.skipped++;
       continue;
     }
@@ -392,19 +490,42 @@ export async function syncDocs(
     }
 
     try {
-      const edited = patch.markdown !== undefined || patch.title !== undefined;
-      if (edited) {
+      const reviews: PendingReview[] = [];
+      if (edited || pendingChange) {
         if (d.version) patch.version = d.version;
-        await patchArticle(d, patch);
+        const write = pendingChange
+          ? { ...patch, ...repositoryState(d, r, body, statusChanged) }
+          : patch;
+        keep(reviews, await patchArticle(d, write));
       }
-      // The label changes only after the move. An article that cannot move
-      // keeps its label, so a later run still sees the move and places it.
-      const moved = needsPlacement && (await placeInSection(d, r.slug));
+      if (pendingMove && !placeDenied) {
+        try {
+          keep(reviews, await cowl.placeArticle(opts.workspace, r.slug, r.nav, opts.note));
+        } catch (err) {
+          if (!isRefusal(err)) throw err;
+          warn(
+            `the server refused to withdraw the pending move of "${d.title}". If the repository dropped the move, reject it in Admin > Proposals. Server error: ${describeError(err)}`,
+          );
+        }
+      }
+      // The label changes only after the move. An article that cannot move,
+      // or whose move waits for review, keeps its label, so a later run still
+      // sees the move and places it.
+      const moved = needsPlacement && (await placeInSection(d, r.slug, reviews));
       if (moved && sectionChanged) {
-        await cowl.updateArticle(opts.workspace, { slug: r.slug, section: d.section });
+        keep(
+          reviews,
+          await cowl.updateArticle(opts.workspace, {
+            slug: r.slug,
+            section: d.section,
+            note: opts.note,
+          }),
+        );
       }
-      if (statusChanged && d.status) await setStatus(r.slug, d.status);
-      if (edited || moved || statusChanged) {
+      if (statusChanged && d.status) await setStatus(r.slug, d.status, reviews);
+      if (reviews.length > 0) {
+        addProposed(result, `"${d.title}"`, reviews);
+      } else if (edited || moved || statusChanged) {
         result.lines.push(`updated "${d.title}"`);
         result.updated++;
       } else {
@@ -418,6 +539,15 @@ export async function syncDocs(
       }
     }
   }
+
+  // Under review, a pending proposal of the key can hold a text change of an
+  // article that the repository dropped. Its prune then also sends the live
+  // title and body, so an approval only deprecates the article.
+  const liveText = async (a: RemoteArticle): Promise<Partial<UpdateArticleArgs>> => {
+    if (!review?.pending?.articles.has(a.slug)) return {};
+    const markdown = await cowl.getArticleMarkdown(opts.workspace, a.slug);
+    return { title: a.title, markdown, allowShrink: true };
+  };
 
   if (sectionRefusal) warn(sectionRefusedWarning(sectionRefusal, [...refusedLabels.values()]));
   if (placeRefusal) warn(placeRefusedWarning(placeRefusal, unmoved));
@@ -439,7 +569,11 @@ export async function syncDocs(
       }
       if (publishDenied) break;
       try {
-        if (await setStatus(a.slug, "DEPRECATED")) {
+        const reviews: PendingReview[] = [];
+        if (!(await setStatus(a.slug, "DEPRECATED", reviews, await liveText(a)))) continue;
+        if (reviews.length > 0) {
+          addProposed(result, `"${a.title}"`, reviews);
+        } else {
           result.lines.push(`deprecated "${a.title}"`);
           result.deleted++;
         }

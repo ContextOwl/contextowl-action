@@ -3,8 +3,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { syncChangelog } from "../src/sync/changelog.js";
+import { proposalLine } from "../src/sync/plan.js";
 import { nullLogger } from "../src/logger.js";
-import { CANONICAL_TAGS, FakeCowl, apiError } from "./fake-cowl.js";
+import { CANONICAL_TAGS, FakeCowl, REVIEW_URL, apiError, reviewState } from "./fake-cowl.js";
 
 function writeChangelog(body: string): string {
   const dir = mkdtempSync(join(tmpdir(), "cowl-cl-"));
@@ -314,5 +315,136 @@ describe("syncChangelog", () => {
       expect(cowl.changelog[0].status).toBe("draft");
       expect(r.warnings.join(" ")).toMatch(/changelog\.publish/);
     }
+  });
+});
+
+describe("syncChangelog under review", () => {
+  const reviewing = () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "review";
+    return cowl;
+  };
+
+  /** One run as runSync starts it: it reads the review state, then syncs. */
+  const run = async (cowl: FakeCowl, file: string, over = {}) =>
+    syncChangelog(cowl, nullLogger, opts(file, { review: await reviewState(cowl), ...over }));
+
+  it("files a new published entry and keeps one proposal on the next run", async () => {
+    const cowl = reviewing();
+    const file = writeChangelog("## [1.0.0] - 2024-01-01\nfirst release\n");
+
+    for (let round = 1; round <= 2; round++) {
+      const r = await run(cowl, file, { note: "Commit 1a2b3c4" });
+
+      expect([r.created, r.proposed, r.failed]).toEqual([0, 1, 0]);
+      expect(r.lines).toEqual([
+        `"1.0.0": Publish changelog entry: 1.0.0. Proposal 1 waits for review: ${REVIEW_URL}1`,
+      ]);
+      expect(r.proposals.map(proposalLine)).toEqual(r.lines);
+      expect(r.warnings).toEqual([]);
+    }
+    expect(cowl.changelog).toEqual([]);
+    expect(cowl.proposals.size).toBe(1);
+    expect(cowl.notes).toEqual(["Commit 1a2b3c4", "Commit 1a2b3c4"]);
+  });
+
+  it("files a change and the prune of a published entry, and keeps the entries", async () => {
+    const cowl = reviewing();
+    cowl.seedChangelog({ title: "1.0.0", markdown: "old", publishedAt: ISO });
+    cowl.seedChangelog({ title: "0.9.0", markdown: "beta", publishedAt: ISO });
+    const file = writeChangelog("## [1.0.0] - 2024-01-01\nnew\n");
+    const r = await run(cowl, file, { prune: true });
+
+    expect([r.updated, r.deleted, r.proposed, r.failed]).toEqual([0, 0, 2, 0]);
+    expect(r.proposals.map(proposalLine)).toEqual([
+      `"1.0.0": Change changelog entry: 1.0.0. Proposal 1 waits for review: ${REVIEW_URL}1`,
+      `"0.9.0": Delete changelog entry: 0.9.0. Proposal 2 waits for review: ${REVIEW_URL}2`,
+    ]);
+    expect(cowl.changelog.map((e) => [e.title, e.markdown])).toEqual([
+      ["1.0.0", "old"],
+      ["0.9.0", "beta"],
+    ]);
+  });
+
+  it("writes a draft entry at once when the key cannot publish", async () => {
+    const cowl = reviewing();
+    cowl.perms.changelogPublish = false;
+    const file = writeChangelog("## [1.0.0] - 2024-01-01\nfirst\n");
+    const r = await run(cowl, file);
+
+    expect([r.created, r.proposed]).toEqual([1, 0]);
+    expect(cowl.changelog[0].status).toBe("draft");
+  });
+
+  it("withdraws a change that the file reverts before an editor approves it", async () => {
+    const cowl = reviewing();
+    // The live tags have another order than the tags of the file, and the
+    // live text ends with a line break.
+    cowl.seedChangelog({
+      title: "1.0.0",
+      markdown: "### Added\n- a\n### Changed\n- b\n",
+      tags: ["improved", "new"],
+      publishedAt: ISO,
+    });
+    const first = await run(
+      cowl,
+      writeChangelog("## [1.0.0] - 2024-01-01\n### Added\n- a2\n### Changed\n- b\n"),
+    );
+    expect(first.proposed).toBe(1);
+
+    const r = await run(
+      cowl,
+      writeChangelog("## [1.0.0] - 2024-01-01\n### Added\n- a\n### Changed\n- b\n"),
+    );
+
+    expect([r.updated, r.skipped, r.proposed, r.failed]).toEqual([0, 1, 0, 0]);
+    expect(cowl.proposals.size).toBe(0);
+    expect(cowl.withdrawn.map((p) => p.id)).toEqual([1]);
+    expect(cowl.sentTags.at(-1)).toEqual(["improved", "new"]);
+    expect(cowl.changelog[0].markdown).toBe("### Added\n- a\n### Changed\n- b\n");
+  });
+
+  it("withdraws the prune of an entry that comes back to the file", async () => {
+    const cowl = reviewing();
+    cowl.seedChangelog({ title: "1.0.0", markdown: "first", publishedAt: ISO });
+    cowl.seedChangelog({ title: "0.9.0", markdown: "beta", publishedAt: ISO });
+    await run(cowl, writeChangelog("## [1.0.0] - 2024-01-01\nfirst\n"), { prune: true });
+    expect([...cowl.proposals.values()].map((p) => p.change)).toEqual([{ action: "delete" }]);
+
+    const r = await run(
+      cowl,
+      writeChangelog("## [1.0.0] - 2024-01-01\nfirst\n## [0.9.0] - 2024-01-01\nbeta\n"),
+      { prune: true },
+    );
+
+    expect([r.skipped, r.proposed, r.deleted, r.failed]).toEqual([2, 0, 0, 0]);
+    expect(cowl.proposals.size).toBe(0);
+    expect(cowl.changelog.map((e) => e.title)).toEqual(["1.0.0", "0.9.0"]);
+  });
+
+  it("keeps only the change that the file still has", async () => {
+    const cowl = reviewing();
+    cowl.seedChangelog({ title: "1.0.0", markdown: "first", publishedAt: ISO });
+    await run(cowl, writeChangelog("## [1.0.0] - 2024-01-01\nchanged\n"));
+
+    const r = await run(cowl, writeChangelog("## [1.0.0] - 2024-02-01\nfirst\n"));
+
+    expect([r.updated, r.proposed, r.failed]).toEqual([0, 1, 0]);
+    expect([...cowl.proposals.values()].map((p) => p.change)).toEqual([
+      { action: "update", publishedAt: "2024-02-01T00:00:00.000Z" },
+    ]);
+  });
+
+  it("warns about a pending create of a version that the file dropped", async () => {
+    const cowl = reviewing();
+    await run(cowl, writeChangelog("## [1.1.0] - 2024-02-01\nsecond\n"));
+    expect(cowl.proposals.size).toBe(1);
+
+    const r = await run(cowl, writeChangelog("## [1.0.0] - 2024-01-01\nfirst\n"));
+
+    expect([r.proposed, r.failed]).toEqual([1, 0]);
+    expect(r.warnings).toEqual([
+      'proposal 1 creates the entry "1.1.0", but the changelog file has no such version. The action cannot withdraw a pending create. If the file dropped the version, reject proposal 1 in Admin > Proposals.',
+    ]);
   });
 });

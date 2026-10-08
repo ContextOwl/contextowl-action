@@ -14530,6 +14530,18 @@ var RestClient = class {
     return `workspaces/${encodeURIComponent(workspace || "-")}`;
   }
   async request(method, path, body) {
+    return (await this.exchange(method, path, body)).data;
+  }
+  /**
+   * Send a write that can wait for review. The server answers 202 when the
+   * organization reviews agent changes, and the body then holds the proposal.
+   */
+  async write(method, path, body) {
+    const { status, data } = await this.exchange(method, path, body);
+    return { data, review: status === 202 ? pendingReviewOf(data) : null };
+  }
+  /** Send a request. Returns the status and the parsed body of a 2xx answer. */
+  async exchange(method, path, body) {
     const operation = `${method} ${path}`;
     const response = await this.send(operation, `${this.apiUrl}/${path}`, {
       method,
@@ -14545,9 +14557,9 @@ var RestClient = class {
     if (!response.ok) {
       throw errorFromResponse(operation, response.status, text, response.statusText);
     }
-    if (!text) return null;
+    if (!text) return { status: response.status, data: null };
     try {
-      return JSON.parse(text);
+      return { status: response.status, data: JSON.parse(text) };
     } catch {
       throw new CowlAPIError(operation, "invalid JSON response", response.status);
     }
@@ -14568,6 +14580,25 @@ var RestClient = class {
       await response.arrayBuffer().catch(() => void 0);
       await this.sleep(retryDelayMs(response.headers.get("Retry-After"), attempt));
     }
+  }
+  async identity() {
+    const data = await this.request("GET", "me");
+    const rec = isRec(data) ? lc(data) : {};
+    return { writes: str(rec.writes), permissions: strArray(rec.permissions) };
+  }
+  async listProposals(workspace) {
+    const data = await this.request("GET", `${this.workspacePath(workspace)}/proposals`);
+    return asArray(data).filter(isRec).map((row) => {
+      const r = lc(row);
+      return {
+        id: num(r.id),
+        objectType: str(r.objecttype),
+        status: str(r.status),
+        target: str(r.target),
+        slug: str(r.slug),
+        title: str(r.title)
+      };
+    });
   }
   async listArticles(workspace) {
     const data = await this.request("GET", `${this.workspacePath(workspace)}/articles`);
@@ -14612,7 +14643,7 @@ var RestClient = class {
     return { slug, nav: str(rec.nav) };
   }
   async updateArticle(workspace, args) {
-    await this.request(
+    const { review } = await this.write(
       "PATCH",
       `${this.workspacePath(workspace)}/articles/${encodeURIComponent(args.slug)}`,
       {
@@ -14620,9 +14651,11 @@ var RestClient = class {
         section: args.section,
         markdown: args.markdown,
         status: args.status,
-        allow_shrink: args.allowShrink || void 0
+        allow_shrink: args.allowShrink || void 0,
+        note: args.note
       }
     );
+    return review;
   }
   async createSection(workspace, label) {
     const data = await this.request("POST", `${this.workspacePath(workspace)}/sections`, {
@@ -14632,12 +14665,13 @@ var RestClient = class {
     if (!key) throw new CowlAPIError("create section", "no section key returned");
     return key;
   }
-  async placeArticle(workspace, slug, sectionKey) {
-    await this.request(
+  async placeArticle(workspace, slug, sectionKey, note) {
+    const { review } = await this.write(
       "POST",
       `${this.workspacePath(workspace)}/articles/${encodeURIComponent(slug)}/placement`,
-      { section: sectionKey }
+      { section: sectionKey, note }
     );
+    return review;
   }
   async listChangelog(workspace, query) {
     const params = new URLSearchParams();
@@ -14662,34 +14696,60 @@ var RestClient = class {
     });
   }
   async createChangelog(workspace, args) {
-    const data = await this.request("POST", `${this.workspacePath(workspace)}/changelog`, {
+    const { review } = await this.write("POST", `${this.workspacePath(workspace)}/changelog`, {
       title: args.title,
       markdown: args.markdown,
       tags: args.tags,
       status: args.status,
-      published_at: args.publishedAt
+      published_at: args.publishedAt,
+      note: args.note
     });
-    return isRec(data) ? num(lc(data).id) : 0;
+    return review;
   }
   async updateChangelog(workspace, args) {
-    await this.request("PATCH", `${this.workspacePath(workspace)}/changelog/${args.id}`, {
-      title: args.title,
-      markdown: args.markdown,
-      tags: args.tags,
-      status: args.status,
-      published_at: args.publishedAt
-    });
+    const { review } = await this.write(
+      "PATCH",
+      `${this.workspacePath(workspace)}/changelog/${args.id}`,
+      {
+        title: args.title,
+        markdown: args.markdown,
+        tags: args.tags,
+        status: args.status,
+        published_at: args.publishedAt,
+        note: args.note
+      }
+    );
+    return review;
   }
-  async deleteChangelog(workspace, id) {
-    await this.request("DELETE", `${this.workspacePath(workspace)}/changelog/${id}`);
+  // A DELETE has no body, so the note is a query parameter. Servers without
+  // the review ignore an unknown query parameter.
+  async deleteChangelog(workspace, id, note) {
+    const query = note ? `?${new URLSearchParams({ note })}` : "";
+    const { review } = await this.write(
+      "DELETE",
+      `${this.workspacePath(workspace)}/changelog/${id}${query}`
+    );
+    return review;
   }
-  async attachOpenapi(workspace, spec) {
-    const data = await this.request("PUT", `${this.workspacePath(workspace)}/openapi`, {
-      spec
+  async attachOpenapi(workspace, spec, note) {
+    const { data, review } = await this.write("PUT", `${this.workspacePath(workspace)}/openapi`, {
+      spec,
+      note
     });
-    return { stats: statsOf(data), unchanged: isRec(data) && lc(data).unchanged === true };
+    return { stats: statsOf(data), unchanged: isRec(data) && lc(data).unchanged === true, review };
   }
 };
+function pendingReviewOf(data) {
+  const body = isRec(data) ? lc(data) : {};
+  const proposal = isRec(body.proposal) ? lc(body.proposal) : {};
+  return {
+    id: num(proposal.id),
+    objectType: str(proposal.objecttype),
+    summary: str(proposal.summary),
+    outcome: str(proposal.outcome),
+    reviewUrl: str(proposal.reviewurl)
+  };
+}
 function errorFromResponse(operation, status, text, statusText = "") {
   let data = null;
   try {
@@ -14729,6 +14789,34 @@ function statsOf(data) {
   };
 }
 
+// src/note.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+var MAX_SUBJECT = 200;
+function commitNote(env, readEvent = (path) => readFileSync2(path, "utf8")) {
+  const sha = env.GITHUB_SHA?.trim();
+  const repository = env.GITHUB_REPOSITORY?.trim();
+  if (!sha || !repository) return void 0;
+  const server = (env.GITHUB_SERVER_URL?.trim() || "https://github.com").replace(/\/+$/, "");
+  const commit = `Commit ${sha.slice(0, 7)} in ${repository}: ${server}/${repository}/commit/${sha}`;
+  const subject = commitSubject(env.GITHUB_EVENT_PATH, readEvent);
+  return subject ? `${sentence(subject)} ${commit}` : commit;
+}
+function commitSubject(eventPath, readEvent) {
+  if (!eventPath) return "";
+  let event;
+  try {
+    event = JSON.parse(readEvent(eventPath));
+  } catch {
+    return "";
+  }
+  const head = isRec(event) && isRec(event.head_commit) ? event.head_commit : {};
+  const subject = str(head.message).split(/\r?\n/)[0].trim();
+  return subject.length > MAX_SUBJECT ? `${subject.slice(0, MAX_SUBJECT - 3).trimEnd()}...` : subject;
+}
+function sentence(text) {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
 // src/sync/index.ts
 import { existsSync as existsSync4 } from "node:fs";
 import { resolve } from "node:path";
@@ -14742,8 +14830,10 @@ function emptyResult(surface) {
     deleted: 0,
     skipped: 0,
     failed: 0,
+    proposed: 0,
     warnings: [],
     failures: [],
+    proposals: [],
     stopped: false,
     lines: []
   };
@@ -14755,13 +14845,98 @@ function totals(results) {
       updated: acc.updated + r.updated,
       deleted: acc.deleted + r.deleted,
       skipped: acc.skipped + r.skipped,
-      failed: acc.failed + r.failed
+      failed: acc.failed + r.failed,
+      proposed: acc.proposed + r.proposed
     }),
-    { created: 0, updated: 0, deleted: 0, skipped: 0, failed: 0 }
+    { created: 0, updated: 0, deleted: 0, skipped: 0, failed: 0, proposed: 0 }
   );
 }
 function count(n, noun) {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+function addProposed(result, item, reviews) {
+  result.proposed++;
+  for (const review of latestById(reviews)) {
+    const proposal = { item, review };
+    result.proposals.push(proposal);
+    result.lines.push(proposalLine(proposal));
+  }
+}
+function latestById(reviews) {
+  const out = [];
+  const index = /* @__PURE__ */ new Map();
+  for (const review of reviews) {
+    const at = review.id > 0 ? index.get(review.id) : void 0;
+    if (at !== void 0) {
+      out[at] = review;
+      continue;
+    }
+    if (review.id > 0) index.set(review.id, out.length);
+    out.push(review);
+  }
+  return out;
+}
+function proposalLine({ item, review }) {
+  const where = review.reviewUrl ? `: ${review.reviewUrl}` : " in Admin > Proposals";
+  return `${item}: ${proposalLead(review)}${where}`;
+}
+function proposalHtml({ item, review }) {
+  const url = review.reviewUrl;
+  let where = " in Admin &gt; Proposals";
+  if (/^https?:\/\//i.test(url)) {
+    where = `: <a href="${escapeHtml(url)}">${escapeHtml(url)}</a>`;
+  } else if (url) {
+    where = `: ${escapeHtml(url)}`;
+  }
+  return `${escapeHtml(item)}: ${escapeHtml(proposalLead(review))}${where}`;
+}
+function proposalLead(review) {
+  const text = `${review.id > 0 ? `proposal ${review.id}` : "the change"} waits for review`;
+  if (!review.summary) return text;
+  return `${review.summary}. ${text[0].toUpperCase()}${text.slice(1)}`;
+}
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function summaryTable(results) {
+  const t = totals(results);
+  const proposed = t.proposed > 0;
+  const row = (name, c) => [
+    name,
+    String(c.created),
+    String(c.updated),
+    ...proposed ? [String(c.proposed)] : [],
+    String(c.deleted),
+    String(c.skipped),
+    String(c.failed)
+  ];
+  return [
+    [
+      "Surface",
+      "Created",
+      "Updated",
+      ...proposed ? ["Proposed"] : [],
+      "Removed",
+      "Unchanged",
+      "Failed"
+    ],
+    ...results.map((r) => row(r.stopped ? `${r.surface} (stopped)` : r.surface, r)),
+    row("total", t)
+  ];
+}
+function totalsLine(results, dryRun) {
+  const t = totals(results);
+  const warnings = results.reduce((n, r) => n + r.warnings.length, 0);
+  const parts = [
+    `${t.created} created`,
+    `${t.updated} updated`,
+    ...t.proposed > 0 ? [`${t.proposed} proposed`] : [],
+    `${t.deleted} removed`,
+    `${t.skipped} unchanged`,
+    `${t.failed} failed`,
+    ...warnings > 0 ? [count(warnings, "warning")] : []
+  ];
+  return `${dryRun ? "Planned" : "Applied"}: ${parts.join(", ")}`;
 }
 function jobFailure(results, failOnError) {
   const stopped = results.filter((r) => r.stopped).map((r) => r.surface);
@@ -14775,8 +14950,37 @@ function jobFailure(results, failOnError) {
   return void 0;
 }
 
+// src/sync/review.ts
+function pendingProposals(rows) {
+  const pending = {
+    articles: /* @__PURE__ */ new Map(),
+    placements: /* @__PURE__ */ new Map(),
+    entries: /* @__PURE__ */ new Map(),
+    creates: []
+  };
+  for (const row of rows) {
+    if (row.status && row.status !== "pending" || !row.target) continue;
+    if (row.objectType === "article" && row.slug) {
+      pending.articles.set(row.slug, row.id);
+    } else if (row.objectType === "placement" && row.slug) {
+      pending.placements.set(row.slug, row.id);
+    } else if (row.objectType === "changelog") {
+      const entry = /^changelog:(\d+)$/.exec(row.target);
+      if (entry) {
+        pending.entries.set(Number(entry[1]), row.id);
+      } else if (row.target.startsWith("changelog-new:") && row.title) {
+        pending.creates.push({ id: row.id, title: row.title });
+      }
+    }
+  }
+  return pending;
+}
+function changelogTitleKey(title) {
+  return title.trim().toLowerCase().split(/\s+/).join(" ");
+}
+
 // src/sync/docs.ts
-import { existsSync, readFileSync as readFileSync2, statSync as statSync2 } from "node:fs";
+import { existsSync, readFileSync as readFileSync3, statSync as statSync2 } from "node:fs";
 
 // src/util/walk.ts
 import { readdirSync, statSync } from "node:fs";
@@ -14887,6 +15091,9 @@ async function mapLimit(items, limit, fn) {
 
 // src/sync/docs.ts
 var READ_CONCURRENCY = 5;
+function keep(reviews, review) {
+  if (review) reviews.push(review);
+}
 function isPlaced(nav) {
   return nav !== "" && nav !== "none";
 }
@@ -14936,7 +15143,15 @@ function placeRefusedWarning(err, titles) {
 function removalText(err) {
   const removed = num(err.details.removed, -1);
   const current = num(err.details.currentLength, -1);
-  return removed >= 0 && current > 0 ? `the new body removes ${removed} of ${current} characters` : "the new body removes most of the current text";
+  const proposal = num(err.details.proposalId, 0);
+  if (removed < 0 || current <= 0) {
+    return proposal > 0 ? `the new body removes most of the text of pending proposal ${proposal} of this key` : "the new body removes most of the current text";
+  }
+  return proposal > 0 ? `the new body removes ${removed} of the ${current} characters of pending proposal ${proposal} of this key, not of the live page` : `the new body removes ${removed} of ${current} characters`;
+}
+function removalRemedy(err) {
+  const proposal = num(err.details.proposalId, 0);
+  return proposal > 0 ? `To accept it, reject proposal ${proposal} in Admin > Proposals or set the allow-shrink input to true` : "To accept it, set the allow-shrink input to true";
 }
 async function syncDocs(cowl, logger2, opts) {
   const result = emptyResult("docs");
@@ -14952,7 +15167,7 @@ async function syncDocs(cowl, logger2, opts) {
   if (!existsSync(opts.dir) || !statSync2(opts.dir).isDirectory()) {
     throw new Error(`docs.dir not found: ${opts.dir}`);
   }
-  const desired = walkMarkdown(opts.dir).map((f) => parseArticle(f, readFileSync2(f.path, "utf8")));
+  const desired = walkMarkdown(opts.dir).map((f) => parseArticle(f, readFileSync3(f.path, "utf8")));
   if (desired.length === 0) {
     warn(`no Markdown files under ${opts.dir}`);
     return result;
@@ -15003,10 +15218,13 @@ async function syncDocs(cowl, logger2, opts) {
     }
   });
   let publishDenied = false;
-  const setStatus = async (slug, status) => {
+  const setStatus = async (slug, status, reviews, text = {}) => {
     if (publishDenied) return false;
     try {
-      await cowl.updateArticle(opts.workspace, { slug, status });
+      keep(
+        reviews,
+        await cowl.updateArticle(opts.workspace, { ...text, slug, status, note: opts.note })
+      );
       return true;
     } catch (err) {
       if (err instanceof CowlAPIError && err.isPermissionDenied("article.publish")) {
@@ -15039,13 +15257,14 @@ async function syncDocs(cowl, logger2, opts) {
   let placeRefusal;
   let placeDenied = false;
   const unmoved = [];
-  const placeInSection = async (d, slug) => {
+  const placeInSection = async (d, slug, reviews) => {
     if (!placeDenied) {
       const key = await sectionKeyFor(d.section);
       if (!key) return false;
       try {
-        await cowl.placeArticle(opts.workspace, slug, key);
-        return true;
+        const review2 = await cowl.placeArticle(opts.workspace, slug, key, opts.note);
+        keep(reviews, review2);
+        return review2 === null;
       } catch (err) {
         if (!isRefusal(err)) throw err;
         if (!placeRefusal) placeRefusal = err;
@@ -15073,23 +15292,36 @@ async function syncDocs(cowl, logger2, opts) {
       return created;
     }
   };
+  const review = opts.review;
+  const repositoryState = (d, r, body, statusChanged) => {
+    const same = body !== null && body.trim() === d.markdown.trim();
+    const state = {
+      title: d.title,
+      markdown: same ? body : d.markdown
+    };
+    if (same) state.allowShrink = true;
+    if (!statusChanged && review?.articlePublish && !publishDenied && r.status) {
+      state.status = r.status;
+    }
+    return state;
+  };
   const patchArticle = async (d, patch) => {
     try {
-      await cowl.updateArticle(opts.workspace, patch);
+      return await cowl.updateArticle(opts.workspace, patch);
     } catch (err) {
       if (!(err instanceof CowlAPIError) || err.code !== "large_removal") throw err;
       if (patch.markdown === void 0) throw err;
       if (!opts.allowShrink) {
         throw new CowlAPIError(
           err.operation,
-          `${removalText(err)}. To accept it, set the allow-shrink input to true`,
+          `${removalText(err)}. ${removalRemedy(err)}`,
           err.status,
           err.code,
           err.details
         );
       }
       warn(`"${d.title}": ${removalText(err)}. The action sends it with allow_shrink.`);
-      await cowl.updateArticle(opts.workspace, { ...patch, allowShrink: true });
+      return cowl.updateArticle(opts.workspace, { ...patch, allowShrink: true });
     }
   };
   for (const d of creates) {
@@ -15099,12 +15331,19 @@ async function syncDocs(cowl, logger2, opts) {
       continue;
     }
     try {
+      const reviews = [];
       const known = sectionKeys.get(labelKey(d.section));
       const created = await createArticle(d, known);
-      const placed = known !== void 0 && created.nav === known || await placeInSection(d, created.slug);
-      if (d.status && d.status !== "DRAFT") await setStatus(created.slug, d.status);
-      result.lines.push(placed ? `created "${d.title}" in ${d.section}` : `created "${d.title}"`);
-      result.created++;
+      const placed = known !== void 0 && created.nav === known || await placeInSection(d, created.slug, reviews);
+      if (d.status && d.status !== "DRAFT") await setStatus(created.slug, d.status, reviews);
+      const line = placed ? `created "${d.title}" in ${d.section}` : `created "${d.title}"`;
+      if (reviews.length > 0) {
+        result.lines.push(`${line} as a draft`);
+        addProposed(result, `"${d.title}"`, reviews);
+      } else {
+        result.lines.push(line);
+        result.created++;
+      }
     } catch (err) {
       fail(`create "${d.title}" failed: ${describeError(err)}`);
     }
@@ -15112,7 +15351,7 @@ async function syncDocs(cowl, logger2, opts) {
   for (let i = 0; i < candidates.length; i++) {
     const { d, remote: r } = candidates[i];
     const body = bodies[i];
-    const patch = { slug: r.slug };
+    const patch = { slug: r.slug, note: opts.note };
     const reasons = [];
     if (body === null || body.trim() !== d.markdown.trim()) {
       patch.markdown = d.markdown;
@@ -15122,11 +15361,15 @@ async function syncDocs(cowl, logger2, opts) {
       patch.title = d.title;
       reasons.push("title");
     }
+    const edited = reasons.length > 0;
     const sectionChanged = labelKey(d.section) !== labelKey(r.section);
     if (sectionChanged) reasons.push("section");
     const needsPlacement = sectionChanged || !isPlaced(r.nav);
     const statusChanged = !!d.status && d.status !== r.status;
-    if (reasons.length === 0 && !needsPlacement && !statusChanged) {
+    const pendingChange = review?.pending?.articles.has(r.slug) ?? false;
+    const pendingMove = !needsPlacement && (review?.pending?.placements.has(r.slug) ?? false);
+    const changed = reasons.length > 0 || needsPlacement || statusChanged;
+    if (!changed && (opts.dryRun || !pendingChange && !pendingMove)) {
       result.skipped++;
       continue;
     }
@@ -15141,17 +15384,37 @@ async function syncDocs(cowl, logger2, opts) {
       continue;
     }
     try {
-      const edited = patch.markdown !== void 0 || patch.title !== void 0;
-      if (edited) {
+      const reviews = [];
+      if (edited || pendingChange) {
         if (d.version) patch.version = d.version;
-        await patchArticle(d, patch);
+        const write = pendingChange ? { ...patch, ...repositoryState(d, r, body, statusChanged) } : patch;
+        keep(reviews, await patchArticle(d, write));
       }
-      const moved = needsPlacement && await placeInSection(d, r.slug);
+      if (pendingMove && !placeDenied) {
+        try {
+          keep(reviews, await cowl.placeArticle(opts.workspace, r.slug, r.nav, opts.note));
+        } catch (err) {
+          if (!isRefusal(err)) throw err;
+          warn(
+            `the server refused to withdraw the pending move of "${d.title}". If the repository dropped the move, reject it in Admin > Proposals. Server error: ${describeError(err)}`
+          );
+        }
+      }
+      const moved = needsPlacement && await placeInSection(d, r.slug, reviews);
       if (moved && sectionChanged) {
-        await cowl.updateArticle(opts.workspace, { slug: r.slug, section: d.section });
+        keep(
+          reviews,
+          await cowl.updateArticle(opts.workspace, {
+            slug: r.slug,
+            section: d.section,
+            note: opts.note
+          })
+        );
       }
-      if (statusChanged && d.status) await setStatus(r.slug, d.status);
-      if (edited || moved || statusChanged) {
+      if (statusChanged && d.status) await setStatus(r.slug, d.status, reviews);
+      if (reviews.length > 0) {
+        addProposed(result, `"${d.title}"`, reviews);
+      } else if (edited || moved || statusChanged) {
         result.lines.push(`updated "${d.title}"`);
         result.updated++;
       } else {
@@ -15165,6 +15428,11 @@ async function syncDocs(cowl, logger2, opts) {
       }
     }
   }
+  const liveText = async (a) => {
+    if (!review?.pending?.articles.has(a.slug)) return {};
+    const markdown = await cowl.getArticleMarkdown(opts.workspace, a.slug);
+    return { title: a.title, markdown, allowShrink: true };
+  };
   if (sectionRefusal) warn(sectionRefusedWarning(sectionRefusal, [...refusedLabels.values()]));
   if (placeRefusal) warn(placeRefusedWarning(placeRefusal, unmoved));
   const orphans = remote.filter(
@@ -15182,7 +15450,11 @@ async function syncDocs(cowl, logger2, opts) {
       }
       if (publishDenied) break;
       try {
-        if (await setStatus(a.slug, "DEPRECATED")) {
+        const reviews = [];
+        if (!await setStatus(a.slug, "DEPRECATED", reviews, await liveText(a))) continue;
+        if (reviews.length > 0) {
+          addProposed(result, `"${a.title}"`, reviews);
+        } else {
           result.lines.push(`deprecated "${a.title}"`);
           result.deleted++;
         }
@@ -15199,7 +15471,7 @@ async function syncDocs(cowl, logger2, opts) {
 }
 
 // src/sync/changelog.ts
-import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync4 } from "node:fs";
 
 // src/util/changelog.ts
 var SECTION_TAGS = /* @__PURE__ */ new Map([
@@ -15346,7 +15618,7 @@ async function syncChangelog(cowl, logger2, opts) {
     logger2.warning(`changelog: ${m}`);
   };
   if (!existsSync2(opts.file)) throw new Error(`changelog.file not found: ${opts.file}`);
-  const parsed = parseChangelog(readFileSync3(opts.file, "utf8"));
+  const parsed = parseChangelog(readFileSync4(opts.file, "utf8"));
   if (parsed.length === 0) {
     warn(`no versioned entries in ${opts.file}`);
     return result;
@@ -15408,11 +15680,13 @@ async function syncChangelog(cowl, logger2, opts) {
       title: d.version,
       markdown: d.markdown,
       tags: d.tags,
-      publishedAt: d.publishedAt
+      publishedAt: d.publishedAt,
+      note: opts.note
     };
     if (publishDenied && draftsHidden) throw new Error(HIDDEN_DRAFT);
+    let review;
     try {
-      await cowl.createChangelog(opts.workspace, {
+      review = await cowl.createChangelog(opts.workspace, {
         ...base,
         status: publishDenied ? "draft" : "published"
       });
@@ -15422,13 +15696,24 @@ async function syncChangelog(cowl, logger2, opts) {
       }
       denyPublish();
       if (draftsHidden) throw new Error(HIDDEN_DRAFT);
-      await cowl.createChangelog(opts.workspace, base);
+      review = await cowl.createChangelog(opts.workspace, base);
+    }
+    if (review) {
+      addProposed(result, `"${d.version}"`, [review]);
+      return;
     }
     result.lines.push(`created "${d.version}"`);
     result.created++;
   };
+  const fullEntry = (d, r) => ({
+    id: r.id,
+    note: opts.note,
+    markdown: d.markdown.trim() === r.markdown.trim() ? r.markdown : d.markdown,
+    tags: d.tags.length > 0 && !tagsEqual(d.tags, r.tags) ? d.tags : r.tags,
+    publishedAt: d.publishedAt ?? r.publishedAt ?? void 0
+  });
   const update = async (d, r) => {
-    const patch = { id: r.id };
+    const patch = { id: r.id, note: opts.note };
     const reasons = [];
     if (d.markdown.trim() !== r.markdown.trim()) {
       patch.markdown = d.markdown;
@@ -15443,34 +15728,42 @@ async function syncChangelog(cowl, logger2, opts) {
       reasons.push("date");
     }
     const wantPublish = r.status !== "published" && !publishDenied;
-    if (wantPublish) {
-      patch.status = "published";
-      reasons.push("publish");
-    }
-    if (reasons.length === 0) {
+    const pending = opts.review?.pending?.entries.has(r.id) ?? false;
+    if (reasons.length === 0 && !wantPublish && (opts.dryRun || !pending)) {
       result.skipped++;
       return;
     }
     if (opts.dryRun) {
-      result.lines.push(`update "${d.version}" (${reasons.join(", ")})`);
+      result.lines.push(
+        `update "${d.version}" (${[...reasons, ...wantPublish ? ["publish"] : []].join(", ")})`
+      );
       result.updated++;
       return;
     }
+    const send = pending ? fullEntry(d, r) : patch;
+    if (wantPublish) send.status = "published";
+    let review;
     try {
-      await cowl.updateChangelog(opts.workspace, patch);
+      review = await cowl.updateChangelog(opts.workspace, send);
     } catch (err) {
-      if (err instanceof CowlAPIError && err.isPermissionDenied("changelog.publish") && patch.status) {
-        denyPublish();
-        delete patch.status;
-        if (patch.markdown !== void 0 || patch.tags !== void 0 || patch.publishedAt !== void 0) {
-          await cowl.updateChangelog(opts.workspace, patch);
-        } else {
-          result.skipped++;
-          return;
-        }
-      } else {
+      if (!(err instanceof CowlAPIError && err.isPermissionDenied("changelog.publish") && send.status)) {
         throw err;
       }
+      denyPublish();
+      delete send.status;
+      if (reasons.length === 0 && !pending) {
+        result.skipped++;
+        return;
+      }
+      review = await cowl.updateChangelog(opts.workspace, send);
+    }
+    if (review) {
+      addProposed(result, `"${d.version}"`, [review]);
+      return;
+    }
+    if (reasons.length === 0 && !(wantPublish && send.status)) {
+      result.skipped++;
+      return;
     }
     result.lines.push(`updated "${d.version}"`);
     result.updated++;
@@ -15493,6 +15786,13 @@ async function syncChangelog(cowl, logger2, opts) {
       fail(`entry "${d.version}" failed: ${describeError(err)}`);
     }
   }
+  const fileTitles = new Set(desired.map((d) => changelogTitleKey(d.version)));
+  for (const { id, title } of opts.review?.pending?.creates ?? []) {
+    if (fileTitles.has(changelogTitleKey(title))) continue;
+    warn(
+      `proposal ${id} creates the entry "${title}", but the changelog file has no such version. The action cannot withdraw a pending create. If the file dropped the version, reject proposal ${id} in Admin > Proposals.`
+    );
+  }
   const orphans = remote.filter((e) => !claimed.has(e.id));
   if (orphans.length > 0 && !opts.prune) {
     logger2.info(`changelog: ${orphans.length} entr(ies) not in repo (enable prune to delete)`);
@@ -15507,7 +15807,11 @@ async function syncChangelog(cowl, logger2, opts) {
       }
       if (deleteDenied) break;
       try {
-        await cowl.deleteChangelog(opts.workspace, e.id);
+        const review = await cowl.deleteChangelog(opts.workspace, e.id, opts.note);
+        if (review) {
+          addProposed(result, `"${e.title}"`, [review]);
+          continue;
+        }
         result.lines.push(`deleted "${e.title}"`);
         result.deleted++;
       } catch (err) {
@@ -15526,7 +15830,7 @@ async function syncChangelog(cowl, logger2, opts) {
 }
 
 // src/sync/openapi.ts
-import { existsSync as existsSync3, readFileSync as readFileSync4, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync5, statSync as statSync3 } from "node:fs";
 function skipReason(err) {
   if (err.status === 402) return "your plan does not include the OpenAPI reference on this server";
   const permission = err.details.permission;
@@ -15535,14 +15839,16 @@ function skipReason(err) {
 async function syncOpenapi(cowl, logger2, opts) {
   const result = emptyResult("openapi");
   if (!existsSync3(opts.spec)) throw new Error(`openapi.spec not found: ${opts.spec}`);
-  const spec = readFileSync4(opts.spec, "utf8");
+  const spec = readFileSync5(opts.spec, "utf8");
   if (opts.dryRun) {
     result.lines.push(`attach OpenAPI spec ${opts.spec} (${statSync3(opts.spec).size} bytes)`);
     return result;
   }
   try {
-    const { stats, unchanged } = await cowl.attachOpenapi(opts.workspace, spec);
-    if (unchanged) {
+    const { stats, unchanged, review } = await cowl.attachOpenapi(opts.workspace, spec, opts.note);
+    if (review) {
+      addProposed(result, "OpenAPI spec", [review]);
+    } else if (unchanged) {
       result.skipped++;
       result.lines.push("OpenAPI spec unchanged: kept the generated pages");
     } else if (stats) {
@@ -15587,7 +15893,30 @@ async function runSurface(logger2, surface, group, sync) {
   logger2.endGroup();
   return r;
 }
-async function runSync(cowl, logger2, cfg, root) {
+var REVIEW_HINT = "The organization reviews agent changes, so changes to live content wait in Admin > Proposals until an editor approves them. To publish on merge, ask an admin to approve this key as a publishing key.";
+var PROPOSALS_UNREAD = "the action cannot read the pending proposals of the key. A change that the repository dropped before an editor approved it can stay in its proposal.";
+async function writeMode(cowl, logger2, cfg, note) {
+  let identity;
+  try {
+    identity = await cowl.identity();
+  } catch {
+    return {};
+  }
+  const mode = { note: identity.writes ? note : void 0 };
+  if (identity.writes !== "review") return mode;
+  logger2.info(REVIEW_HINT);
+  if (cfg.dryRun) return mode;
+  mode.review = { articlePublish: identity.permissions.includes("article.publish") };
+  if (cfg.docs || cfg.changelog) {
+    try {
+      mode.review.pending = pendingProposals(await cowl.listProposals(cfg.workspace));
+    } catch (err) {
+      logger2.warning(`${PROPOSALS_UNREAD} Server error: ${describeError(err)}`);
+    }
+  }
+  return mode;
+}
+async function runSync(cowl, logger2, cfg, root, note) {
   const docsDir = cfg.docs ? resolve(root, cfg.docs.dir) : void 0;
   const changelogFile = cfg.changelog ? resolve(root, cfg.changelog.file) : void 0;
   const openapiSpec = cfg.openapi ? resolve(root, cfg.openapi.spec) : void 0;
@@ -15604,6 +15933,7 @@ async function runSync(cowl, logger2, cfg, root) {
       "prune is ON: articles absent from the repo will be DEPRECATED and changelog entries DELETED."
     );
   }
+  const { note: sentNote, review } = await writeMode(cowl, logger2, cfg, note);
   const results = [];
   if (docsDir) {
     results.push(
@@ -15616,7 +15946,9 @@ async function runSync(cowl, logger2, cfg, root) {
           workspace: cfg.workspace,
           prune: cfg.prune,
           dryRun: cfg.dryRun,
-          allowShrink: cfg.allowShrink
+          allowShrink: cfg.allowShrink,
+          note: sentNote,
+          review
         })
       )
     );
@@ -15631,7 +15963,9 @@ async function runSync(cowl, logger2, cfg, root) {
           file: changelogFile,
           workspace: cfg.workspace,
           prune: cfg.prune,
-          dryRun: cfg.dryRun
+          dryRun: cfg.dryRun,
+          note: sentNote,
+          review
         })
       )
     );
@@ -15645,7 +15979,8 @@ async function runSync(cowl, logger2, cfg, root) {
         () => syncOpenapi(cowl, logger2, {
           spec: openapiSpec,
           workspace: cfg.workspace,
-          dryRun: cfg.dryRun
+          dryRun: cfg.dryRun,
+          note: sentNote
         })
       )
     );
@@ -15678,19 +16013,22 @@ async function run() {
   const cfg = resolveConfig(inputs);
   core.info(`ContextOwl API: ${cfg.apiUrl}`);
   if (cfg.dryRun) core.info("Dry run: no changes will be made.");
-  const results = await runSync(new RestClient(cfg.apiUrl, cfg.token), logger, cfg, root);
+  const results = await runSync(
+    new RestClient(cfg.apiUrl, cfg.token),
+    logger,
+    cfg,
+    root,
+    commitNote(process.env)
+  );
   const t = totals(results);
   core.setOutput("created", t.created);
   core.setOutput("updated", t.updated);
   core.setOutput("deleted", t.deleted);
   core.setOutput("skipped", t.skipped);
   core.setOutput("failed", t.failed);
-  const warnings = results.flatMap((r) => r.warnings);
+  core.setOutput("proposed", t.proposed);
   await writeSummary(results, cfg.dryRun);
-  const verb = cfg.dryRun ? "Planned" : "Applied";
-  core.info(
-    `${verb}: ${t.created} created, ${t.updated} updated, ${t.deleted} removed, ${t.skipped} unchanged, ${t.failed} failed` + (warnings.length ? `, ${count(warnings.length, "warning")}` : "")
-  );
+  core.info(totalsLine(results, cfg.dryRun));
   const failure = jobFailure(results, cfg.failOnError);
   if (failure) {
     core.setFailed(failure);
@@ -15702,36 +16040,15 @@ async function run() {
 }
 async function writeSummary(results, dryRun) {
   if (!process.env.GITHUB_STEP_SUMMARY) return;
-  const t = totals(results);
-  core.summary.addHeading(`ContextOwl ${dryRun ? "(dry run)" : "publish"}`, 2).addTable([
-    [
-      { data: "Surface", header: true },
-      { data: "Created", header: true },
-      { data: "Updated", header: true },
-      { data: "Removed", header: true },
-      { data: "Unchanged", header: true },
-      { data: "Failed", header: true }
-    ],
-    ...results.map((r) => [
-      r.stopped ? `${r.surface} (stopped)` : r.surface,
-      String(r.created),
-      String(r.updated),
-      String(r.deleted),
-      String(r.skipped),
-      String(r.failed)
-    ]),
-    [
-      "total",
-      String(t.created),
-      String(t.updated),
-      String(t.deleted),
-      String(t.skipped),
-      String(t.failed)
-    ]
-  ]);
+  const [header, ...rows] = summaryTable(results);
+  core.summary.addHeading(`ContextOwl ${dryRun ? "(dry run)" : "publish"}`, 2).addTable([header.map((data) => ({ data, header: true })), ...rows]);
   const failures = results.flatMap((r) => r.failures);
   if (failures.length) {
     core.summary.addHeading("Failures", 3).addList(failures);
+  }
+  const proposals = results.flatMap((r) => r.proposals);
+  if (proposals.length) {
+    core.summary.addHeading("Waiting for review", 3).addList(proposals.map(proposalHtml));
   }
   const warnings = results.flatMap((r) => r.warnings);
   if (warnings.length) {

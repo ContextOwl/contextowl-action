@@ -4,10 +4,13 @@ import {
   type CreateArticleArgs,
   type CreateChangelogArgs,
   type CreatedArticle,
+  type KeyIdentity,
   type OpenapiAttachResult,
   type OpenapiStats,
+  type PendingReview,
   type RemoteArticle,
   type RemoteChangelog,
+  type RemoteProposal,
   type RemoteSection,
   type UpdateArticleArgs,
   type UpdateChangelogArgs,
@@ -45,6 +48,28 @@ export class RestClient implements Cowl {
     path: string,
     body?: Record<string, unknown>,
   ): Promise<T> {
+    return (await this.exchange(method, path, body)).data as T;
+  }
+
+  /**
+   * Send a write that can wait for review. The server answers 202 when the
+   * organization reviews agent changes, and the body then holds the proposal.
+   */
+  private async write(
+    method: string,
+    path: string,
+    body?: Record<string, unknown>,
+  ): Promise<{ data: unknown; review: PendingReview | null }> {
+    const { status, data } = await this.exchange(method, path, body);
+    return { data, review: status === 202 ? pendingReviewOf(data) : null };
+  }
+
+  /** Send a request. Returns the status and the parsed body of a 2xx answer. */
+  private async exchange(
+    method: string,
+    path: string,
+    body?: Record<string, unknown>,
+  ): Promise<{ status: number; data: unknown }> {
     const operation = `${method} ${path}`;
     const response = await this.send(operation, `${this.apiUrl}/${path}`, {
       method,
@@ -61,9 +86,9 @@ export class RestClient implements Cowl {
     if (!response.ok) {
       throw errorFromResponse(operation, response.status, text, response.statusText);
     }
-    if (!text) return null as T;
+    if (!text) return { status: response.status, data: null };
     try {
-      return JSON.parse(text) as T;
+      return { status: response.status, data: JSON.parse(text) };
     } catch {
       throw new CowlAPIError(operation, "invalid JSON response", response.status);
     }
@@ -85,6 +110,29 @@ export class RestClient implements Cowl {
       await response.arrayBuffer().catch(() => undefined);
       await this.sleep(retryDelayMs(response.headers.get("Retry-After"), attempt));
     }
+  }
+
+  async identity(): Promise<KeyIdentity> {
+    const data = await this.request<unknown>("GET", "me");
+    const rec = isRec(data) ? lc(data) : {};
+    return { writes: str(rec.writes), permissions: strArray(rec.permissions) };
+  }
+
+  async listProposals(workspace: string | undefined): Promise<RemoteProposal[]> {
+    const data = await this.request<unknown>("GET", `${this.workspacePath(workspace)}/proposals`);
+    return asArray(data)
+      .filter(isRec)
+      .map((row) => {
+        const r = lc(row);
+        return {
+          id: num(r.id),
+          objectType: str(r.objecttype),
+          status: str(r.status),
+          target: str(r.target),
+          slug: str(r.slug),
+          title: str(r.title),
+        };
+      });
   }
 
   async listArticles(workspace: string | undefined): Promise<RemoteArticle[]> {
@@ -140,8 +188,11 @@ export class RestClient implements Cowl {
     return { slug, nav: str(rec.nav) };
   }
 
-  async updateArticle(workspace: string | undefined, args: UpdateArticleArgs): Promise<void> {
-    await this.request(
+  async updateArticle(
+    workspace: string | undefined,
+    args: UpdateArticleArgs,
+  ): Promise<PendingReview | null> {
+    const { review } = await this.write(
       "PATCH",
       `${this.workspacePath(workspace)}/articles/${encodeURIComponent(args.slug)}`,
       {
@@ -150,8 +201,10 @@ export class RestClient implements Cowl {
         markdown: args.markdown,
         status: args.status,
         allow_shrink: args.allowShrink || undefined,
+        note: args.note,
       },
     );
+    return review;
   }
 
   async createSection(workspace: string | undefined, label: string): Promise<string> {
@@ -167,12 +220,14 @@ export class RestClient implements Cowl {
     workspace: string | undefined,
     slug: string,
     sectionKey: string,
-  ): Promise<void> {
-    await this.request(
+    note?: string,
+  ): Promise<PendingReview | null> {
+    const { review } = await this.write(
       "POST",
       `${this.workspacePath(workspace)}/articles/${encodeURIComponent(slug)}/placement`,
-      { section: sectionKey },
+      { section: sectionKey, note },
     );
+    return review;
   }
 
   async listChangelog(
@@ -203,37 +258,79 @@ export class RestClient implements Cowl {
       });
   }
 
-  async createChangelog(workspace: string | undefined, args: CreateChangelogArgs): Promise<number> {
-    const data = await this.request<unknown>("POST", `${this.workspacePath(workspace)}/changelog`, {
+  async createChangelog(
+    workspace: string | undefined,
+    args: CreateChangelogArgs,
+  ): Promise<PendingReview | null> {
+    const { review } = await this.write("POST", `${this.workspacePath(workspace)}/changelog`, {
       title: args.title,
       markdown: args.markdown,
       tags: args.tags,
       status: args.status,
       published_at: args.publishedAt,
+      note: args.note,
     });
-    return isRec(data) ? num(lc(data).id) : 0;
+    return review;
   }
 
-  async updateChangelog(workspace: string | undefined, args: UpdateChangelogArgs): Promise<void> {
-    await this.request("PATCH", `${this.workspacePath(workspace)}/changelog/${args.id}`, {
-      title: args.title,
-      markdown: args.markdown,
-      tags: args.tags,
-      status: args.status,
-      published_at: args.publishedAt,
-    });
+  async updateChangelog(
+    workspace: string | undefined,
+    args: UpdateChangelogArgs,
+  ): Promise<PendingReview | null> {
+    const { review } = await this.write(
+      "PATCH",
+      `${this.workspacePath(workspace)}/changelog/${args.id}`,
+      {
+        title: args.title,
+        markdown: args.markdown,
+        tags: args.tags,
+        status: args.status,
+        published_at: args.publishedAt,
+        note: args.note,
+      },
+    );
+    return review;
   }
 
-  async deleteChangelog(workspace: string | undefined, id: number): Promise<void> {
-    await this.request("DELETE", `${this.workspacePath(workspace)}/changelog/${id}`);
+  // A DELETE has no body, so the note is a query parameter. Servers without
+  // the review ignore an unknown query parameter.
+  async deleteChangelog(
+    workspace: string | undefined,
+    id: number,
+    note?: string,
+  ): Promise<PendingReview | null> {
+    const query = note ? `?${new URLSearchParams({ note })}` : "";
+    const { review } = await this.write(
+      "DELETE",
+      `${this.workspacePath(workspace)}/changelog/${id}${query}`,
+    );
+    return review;
   }
 
-  async attachOpenapi(workspace: string | undefined, spec: string): Promise<OpenapiAttachResult> {
-    const data = await this.request<unknown>("PUT", `${this.workspacePath(workspace)}/openapi`, {
+  async attachOpenapi(
+    workspace: string | undefined,
+    spec: string,
+    note?: string,
+  ): Promise<OpenapiAttachResult> {
+    const { data, review } = await this.write("PUT", `${this.workspacePath(workspace)}/openapi`, {
       spec,
+      note,
     });
-    return { stats: statsOf(data), unchanged: isRec(data) && lc(data).unchanged === true };
+    return { stats: statsOf(data), unchanged: isRec(data) && lc(data).unchanged === true, review };
   }
+}
+
+/** Read the proposal from the body of a 202 answer. Every field is optional. */
+function pendingReviewOf(data: unknown): PendingReview {
+  const body = isRec(data) ? lc(data) : {};
+  const proposal = isRec(body.proposal) ? lc(body.proposal) : {};
+  return {
+    id: num(proposal.id),
+    objectType: str(proposal.objecttype),
+    summary: str(proposal.summary),
+    outcome: str(proposal.outcome),
+    reviewUrl: str(proposal.reviewurl),
+  };
 }
 
 /**

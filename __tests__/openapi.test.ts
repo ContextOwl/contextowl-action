@@ -3,8 +3,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { syncOpenapi } from "../src/sync/openapi.js";
+import { proposalLine } from "../src/sync/plan.js";
 import { nullLogger } from "../src/logger.js";
-import { FakeCowl, apiError } from "./fake-cowl.js";
+import { FakeCowl, REVIEW_URL, apiError } from "./fake-cowl.js";
 
 function writeSpec(body: string): string {
   const dir = mkdtempSync(join(tmpdir(), "cowl-oas-"));
@@ -89,5 +90,51 @@ describe("syncOpenapi", () => {
     await expect(syncOpenapi(cowl, nullLogger, opts("/no/such/spec.yaml"))).rejects.toThrow(
       /not found/,
     );
+  });
+
+  it("counts a spec that waits for review as proposed and keeps one proposal", async () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "review";
+    cowl.openapiStats = { created: 3, updated: 1, deleted: 2 };
+    const spec = writeSpec("openapi: 3.0.0\n");
+
+    for (let run = 1; run <= 2; run++) {
+      const r = await syncOpenapi(cowl, nullLogger, opts(spec, { note: "Commit 1a2b3c4" }));
+
+      expect([r.created, r.updated, r.deleted, r.skipped, r.proposed]).toEqual([0, 0, 0, 0, 1]);
+      expect(r.lines).toEqual([
+        `OpenAPI spec: Attach the API reference: 3 new, 1 changed, 2 removed. Proposal 1 waits for review: ${REVIEW_URL}1`,
+      ]);
+      expect(r.proposals.map(proposalLine)).toEqual(r.lines);
+    }
+    expect(cowl.openapiSpec).toBeNull();
+    expect(cowl.notes).toEqual(["Commit 1a2b3c4", "Commit 1a2b3c4"]);
+  });
+
+  it("withdraws the pending spec when the repository reverts it", async () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "review";
+    cowl.openapiSpec = "openapi: 3.0.0\n";
+    const first = await syncOpenapi(cowl, nullLogger, opts(writeSpec("openapi: 3.1.0\n")));
+    expect(first.proposed).toBe(1);
+
+    const r = await syncOpenapi(cowl, nullLogger, opts(writeSpec("openapi: 3.0.0\n")));
+
+    expect([r.skipped, r.proposed, r.failed]).toEqual([1, 0, 0]);
+    expect(cowl.proposals.size).toBe(0);
+    expect(cowl.withdrawn.map((p) => p.objectType)).toEqual(["openapi"]);
+  });
+
+  it("names the change without a link when the 202 answer has none", async () => {
+    const cowl = new FakeCowl();
+    cowl.attachOpenapi = async () => ({
+      stats: null,
+      unchanged: false,
+      review: { id: 0, objectType: "", summary: "", outcome: "", reviewUrl: "" },
+    });
+    const r = await syncOpenapi(cowl, nullLogger, opts(writeSpec("openapi: 3.0.0\n")));
+
+    expect([r.proposed, r.failed]).toEqual([1, 0]);
+    expect(r.lines).toEqual(["OpenAPI spec: the change waits for review in Admin > Proposals"]);
   });
 });

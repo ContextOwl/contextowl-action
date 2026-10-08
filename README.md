@@ -10,8 +10,12 @@ has the complete setup, configuration, permissions, and sync reference.
 ## Quick start
 
 1. Create an agent key in **Admin > Settings > API**. Bind it to one workspace.
-2. Store the key in a repository secret named `CONTEXTOWL_PAT`.
-3. Add `.contextowl.yml` to the repository root:
+2. If your organization reviews agent changes, select **Publish directly** when
+   you create the key, or **Approve publishing** on its row. New organizations
+   review agent changes. Without the approval, each publish waits in
+   **Admin > Proposals**. See [Review](#review).
+3. Store the key in a repository secret named `CONTEXTOWL_PAT`.
+4. Add `.contextowl.yml` to the repository root:
 
    ```yaml
    docs:
@@ -22,7 +26,7 @@ has the complete setup, configuration, permissions, and sync reference.
      spec: openapi.yaml
    ```
 
-4. Add `.github/workflows/contextowl.yml`:
+5. Add `.github/workflows/contextowl.yml`:
 
    ```yaml
    name: Publish to ContextOwl
@@ -57,9 +61,10 @@ action reads the key from the `token` input, so you choose the secret name.
 
 ## Outputs
 
-`created`, `updated`, `deleted`, `skipped`, and `failed` hold the totals for all
-surfaces. A surface that stops before it finishes counts as 1 in `failed`. The
-action also writes a summary table to the workflow run.
+`created`, `updated`, `deleted`, `skipped`, `failed`, and `proposed` hold the
+totals for all surfaces. A surface that stops before it finishes counts as 1 in
+`failed`. `proposed` counts the items with a change that waits for review. See
+[Review](#review). The action also writes a summary table to the workflow run.
 
 ## Front matter
 
@@ -144,10 +149,88 @@ failed item.
 To accept such a change, set `allow-shrink: true`. The action then sends the
 body again with `allow_shrink` and logs a warning.
 
+Under review, the server measures the removal against the pending proposal of
+the key when that proposal changes the text. The error then names the
+proposal. To send the new body, reject that proposal in **Admin > Proposals**
+or set `allow-shrink: true`. A body that equals the live body removes nothing
+from the live article, so the action sends it with `allow_shrink`.
+
+## Review
+
+An organization can review agent changes. When the review is on and the key is
+not a publishing key, the server answers `202` to these writes. The change then
+waits in **Admin > Proposals** until an editor approves it:
+
+- A change to a published article, the publish of a draft, and the move of a
+  published article.
+- A new published changelog entry, a change to a published entry, and the
+  publish of a draft entry.
+- The prune of a published article or changelog entry.
+- An OpenAPI spec that changes the API reference.
+
+New drafts and new sections still sync at once. The action counts an item with
+a change that waits as proposed, not as created, updated, or removed. A new
+article whose publish waits also counts as proposed. Its draft already exists
+in the app. The job summary lists each proposal with its review link, for
+example:
+
+```text
+"Getting Started": Publish getting-started: DRAFT to STABLE. Proposal 42 waits for review: https://contextowl.co/admin/proposals?ws=docs&id=42
+```
+
+A change that waits does not fail the job. The next run sends the same change
+again, and the server keeps one proposal for it. An article whose move waits
+keeps its section until an editor approves the move. When an editor rejects a
+change, the next run files it again while the repository still has it.
+
+To publish on every merge, approve the key as a publishing key in
+**Admin > Settings > API**.
+
+### Changes before approval
+
+The server keeps one proposal for each item and key, and each write of the key
+changes that proposal. A field that a write leaves out keeps its value in the
+proposal. So when the changes of the key wait for review, the action reads the
+pending proposals at the start of each run with
+`GET /api/v1/workspaces/{workspace}/proposals`. A dry run reads none. For an
+item with a pending proposal, the action sends the full state from the
+repository:
+
+- When the repository reverts the change, the item equals the live content, and
+  the server withdraws the proposal. The item counts as unchanged.
+- When the repository changes the item again, the proposal holds only the
+  difference between the repository and the live content.
+- When the repository moves an article back to its current section, the server
+  withdraws the pending move.
+- When a file or a changelog version comes back after its prune waits, the
+  server withdraws the prune.
+
+These proposals stay until an editor rejects them:
+
+- The create of a changelog entry, when the file drops the version before the
+  approval. No write withdraws a create, so the action logs a warning with the
+  proposal number.
+- A proposal for an article or an entry that the repository no longer has,
+  when prune is off.
+- Any proposal, when the action cannot read the proposal list. The action then
+  logs a warning.
+
+The proposal list holds the proposals of all keys of the key owner. A write of
+this key never changes the proposal of another key.
+
+### Note for the reviewer
+
+Each write that can wait for review sends a note for the reviewer: the subject
+of the pushed commit and a link to the commit. The action reads
+`GET /api/v1/me` first and sends the note only when the server returns
+`writes`, because older servers reject an unknown field. When the changes of
+the key wait for review, the action logs a hint at the start of the run.
+
 ## Sync behavior
 
 - The action skips content that did not change, so revision history and the
-  audit log stay clean.
+  audit log stay clean. Under review, it also sends an unchanged item that has
+  a pending proposal. See [Changes before approval](#changes-before-approval).
 - The changelog sync reads all remote entries, 100 for each request. A file with
   many versions never creates duplicate entries. When the server does not
   support paging and returns 50 entries or more, the changelog sync stops before

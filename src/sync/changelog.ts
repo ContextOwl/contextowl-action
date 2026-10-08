@@ -8,10 +8,11 @@
 // cannot find. Prune is opt-in and hard-deletes entries whose version is
 // absent from the file.
 import { existsSync, readFileSync } from "node:fs";
-import type { Cowl, RemoteChangelog } from "../types.js";
+import type { Cowl, PendingReview, RemoteChangelog, UpdateChangelogArgs } from "../types.js";
 import { CowlAPIError, describeError } from "../types.js";
 import type { Logger } from "../logger.js";
-import { type SurfaceResult, emptyResult } from "./plan.js";
+import { type SurfaceResult, addProposed, emptyResult } from "./plan.js";
+import { type ReviewState, changelogTitleKey } from "./review.js";
 import { type ParsedChangelogEntry, parseChangelog } from "../util/changelog.js";
 
 export interface ChangelogSyncOptions {
@@ -19,6 +20,10 @@ export interface ChangelogSyncOptions {
   workspace: string | undefined;
   prune: boolean;
   dryRun: boolean;
+  /** Note for the reviewer on each write that can wait for review. */
+  note?: string;
+  /** Set when the changes of the key to live content wait for review. */
+  review?: ReviewState;
 }
 
 /** Entries per list request: the largest page the server allows. */
@@ -175,16 +180,21 @@ export async function syncChangelog(
     }
   };
 
+  // A published entry that waits for review does not exist until an editor
+  // approves it. The next run sends the create again, and the server keeps
+  // one proposal for the title, so the approval creates one entry.
   const create = async (d: ParsedChangelogEntry): Promise<void> => {
     const base = {
       title: d.version,
       markdown: d.markdown,
       tags: d.tags,
       publishedAt: d.publishedAt,
+      note: opts.note,
     };
     if (publishDenied && draftsHidden) throw new Error(HIDDEN_DRAFT);
+    let review: PendingReview | null;
     try {
-      await cowl.createChangelog(opts.workspace, {
+      review = await cowl.createChangelog(opts.workspace, {
         ...base,
         status: publishDenied ? "draft" : "published",
       });
@@ -194,20 +204,32 @@ export async function syncChangelog(
       }
       denyPublish();
       if (draftsHidden) throw new Error(HIDDEN_DRAFT);
-      await cowl.createChangelog(opts.workspace, base);
+      review = await cowl.createChangelog(opts.workspace, base);
+    }
+    if (review) {
+      addProposed(result, `"${d.version}"`, [review]);
+      return;
     }
     result.lines.push(`created "${d.version}"`);
     result.created++;
   };
 
+  // Under review, an update changes the working copy of the key, and a field
+  // that the update leaves out keeps its value there. So the update of an
+  // entry with a pending proposal of the key sends the full entry from the
+  // file. A field that the file does not set, or that equals the live entry,
+  // goes as the live value. Then the spaces around the text and the order of
+  // the tags add no change.
+  const fullEntry = (d: ParsedChangelogEntry, r: RemoteChangelog): UpdateChangelogArgs => ({
+    id: r.id,
+    note: opts.note,
+    markdown: d.markdown.trim() === r.markdown.trim() ? r.markdown : d.markdown,
+    tags: d.tags.length > 0 && !tagsEqual(d.tags, r.tags) ? d.tags : r.tags,
+    publishedAt: d.publishedAt ?? r.publishedAt ?? undefined,
+  });
+
   const update = async (d: ParsedChangelogEntry, r: RemoteChangelog): Promise<void> => {
-    const patch: {
-      id: number;
-      markdown?: string;
-      tags?: string[];
-      publishedAt?: string;
-      status?: string;
-    } = { id: r.id };
+    const patch: UpdateChangelogArgs = { id: r.id, note: opts.note };
     const reasons: string[] = [];
     if (d.markdown.trim() !== r.markdown.trim()) {
       patch.markdown = d.markdown;
@@ -222,44 +244,52 @@ export async function syncChangelog(
       reasons.push("date");
     }
     const wantPublish = r.status !== "published" && !publishDenied;
-    if (wantPublish) {
-      patch.status = "published";
-      reasons.push("publish");
-    }
+    // A pending proposal of the key from an earlier run can hold a change or
+    // a delete that the file no longer has. An update with the entry from the
+    // file brings it in line, or withdraws it when the entry equals the live
+    // entry.
+    const pending = opts.review?.pending?.entries.has(r.id) ?? false;
 
-    if (reasons.length === 0) {
+    if (reasons.length === 0 && !wantPublish && (opts.dryRun || !pending)) {
       result.skipped++;
       return;
     }
     if (opts.dryRun) {
-      result.lines.push(`update "${d.version}" (${reasons.join(", ")})`);
+      result.lines.push(
+        `update "${d.version}" (${[...reasons, ...(wantPublish ? ["publish"] : [])].join(", ")})`,
+      );
       result.updated++;
       return;
     }
 
+    const send = pending ? fullEntry(d, r) : patch;
+    if (wantPublish) send.status = "published";
+    let review: PendingReview | null;
     try {
-      await cowl.updateChangelog(opts.workspace, patch);
+      review = await cowl.updateChangelog(opts.workspace, send);
     } catch (err) {
-      if (
+      if (!(
         err instanceof CowlAPIError &&
         err.isPermissionDenied("changelog.publish") &&
-        patch.status
-      ) {
-        denyPublish();
-        delete patch.status;
-        if (
-          patch.markdown !== undefined ||
-          patch.tags !== undefined ||
-          patch.publishedAt !== undefined
-        ) {
-          await cowl.updateChangelog(opts.workspace, patch);
-        } else {
-          result.skipped++;
-          return;
-        }
-      } else {
+        send.status
+      )) {
         throw err;
       }
+      denyPublish();
+      delete send.status;
+      if (reasons.length === 0 && !pending) {
+        result.skipped++;
+        return;
+      }
+      review = await cowl.updateChangelog(opts.workspace, send);
+    }
+    if (review) {
+      addProposed(result, `"${d.version}"`, [review]);
+      return;
+    }
+    if (reasons.length === 0 && !(wantPublish && send.status)) {
+      result.skipped++;
+      return;
     }
     result.lines.push(`updated "${d.version}"`);
     result.updated++;
@@ -284,6 +314,16 @@ export async function syncChangelog(
     }
   }
 
+  // No write withdraws a pending create, so a version that the file dropped
+  // after its create waited stays until an editor rejects it.
+  const fileTitles = new Set(desired.map((d) => changelogTitleKey(d.version)));
+  for (const { id, title } of opts.review?.pending?.creates ?? []) {
+    if (fileTitles.has(changelogTitleKey(title))) continue;
+    warn(
+      `proposal ${id} creates the entry "${title}", but the changelog file has no such version. The action cannot withdraw a pending create. If the file dropped the version, reject proposal ${id} in Admin > Proposals.`,
+    );
+  }
+
   // Prune: delete entries whose version is no longer in the file.
   const orphans = remote.filter((e) => !claimed.has(e.id));
   if (orphans.length > 0 && !opts.prune) {
@@ -299,7 +339,11 @@ export async function syncChangelog(
       }
       if (deleteDenied) break;
       try {
-        await cowl.deleteChangelog(opts.workspace, e.id);
+        const review = await cowl.deleteChangelog(opts.workspace, e.id, opts.note);
+        if (review) {
+          addProposed(result, `"${e.title}"`, [review]);
+          continue;
+        }
         result.lines.push(`deleted "${e.title}"`);
         result.deleted++;
       } catch (err) {

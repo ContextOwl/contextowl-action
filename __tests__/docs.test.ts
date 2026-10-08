@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { syncDocs } from "../src/sync/docs.js";
-import { jobFailure } from "../src/sync/plan.js";
+import { jobFailure, proposalLine } from "../src/sync/plan.js";
 import { nullLogger } from "../src/logger.js";
-import { FakeCowl, apiError, upgradeRequired } from "./fake-cowl.js";
+import { FakeCowl, REVIEW_URL, apiError, reviewState, upgradeRequired } from "./fake-cowl.js";
 
 function writeTree(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "cowl-docs-"));
@@ -617,5 +617,386 @@ describe("syncDocs", () => {
 
     expect(r.created).toBe(1);
     expect(cowl.articles.size).toBe(0);
+  });
+});
+
+describe("syncDocs under review", () => {
+  const reviewing = () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "review";
+    return cowl;
+  };
+
+  /** One run as runSync starts it: it reads the review state, then syncs. */
+  const run = async (cowl: FakeCowl, dir: string, over = {}) =>
+    syncDocs(cowl, nullLogger, opts(dir, { review: await reviewState(cowl), ...over }));
+
+  it("creates a new article as a draft and counts its publish as proposed", async () => {
+    const cowl = reviewing();
+    const dir = writeTree({ "guides/intro.md": "---\ntitle: Intro\nstatus: STABLE\n---\nhello" });
+    const r = await run(cowl, dir);
+
+    expect([r.created, r.proposed, r.failed]).toEqual([0, 1, 0]);
+    expect(jobFailure([r], true)).toBeUndefined();
+    expect(cowl.articles.get("intro")).toMatchObject({
+      status: "DRAFT",
+      nav: "guides",
+      markdown: "hello",
+    });
+    const waiting = `"Intro": Publish intro: DRAFT to STABLE. Proposal 1 waits for review: ${REVIEW_URL}1`;
+    expect(r.lines).toEqual(['created "Intro" in Guides as a draft', waiting]);
+    expect(r.proposals.map(proposalLine)).toEqual([waiting]);
+  });
+
+  it("files a change to a live article and keeps one proposal on the next run", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", section: "Guides", status: "STABLE", markdown: "hello" });
+    const dir = writeTree({ "guides/intro.md": "---\ntitle: Intro\nstatus: STABLE\n---\nnew" });
+
+    for (let round = 1; round <= 2; round++) {
+      const r = await run(cowl, dir);
+
+      expect([r.updated, r.skipped, r.proposed, r.failed]).toEqual([0, 0, 1, 0]);
+      expect(r.proposals.map(proposalLine)).toEqual([
+        `"Intro": Change intro: markdown. Proposal 1 waits for review: ${REVIEW_URL}1`,
+      ]);
+    }
+    expect(cowl.proposals.size).toBe(1);
+    expect(cowl.articles.get("intro")!.markdown).toBe("hello");
+  });
+
+  it("lists each proposal of an article once, with the answer to its last write", async () => {
+    const cowl = reviewing();
+    cowl.sections.set("reference", "Reference");
+    cowl.seedArticle({ title: "Setup", section: "Guides", status: "STABLE", markdown: "old" });
+    const dir = writeTree({
+      "setup.md": "---\ntitle: Setup\nsection: Reference\nstatus: DEPRECATED\n---\nnew",
+    });
+    const r = await run(cowl, dir);
+
+    expect([r.updated, r.proposed, r.failed]).toEqual([0, 1, 0]);
+    expect(cowl.log).toEqual([
+      "update setup markdown",
+      "place setup reference",
+      "update setup status=DEPRECATED",
+    ]);
+    expect(r.proposals.map(proposalLine)).toEqual([
+      `"Setup": Change setup: markdown, status. Proposal 1 waits for review: ${REVIEW_URL}1`,
+      `"Setup": Move setup from guides to reference. Proposal 2 waits for review: ${REVIEW_URL}2`,
+    ]);
+    // The move waits, so the article keeps its place and its label.
+    expect(cowl.articles.get("setup")).toMatchObject({
+      section: "Guides",
+      nav: "guides",
+      status: "STABLE",
+    });
+  });
+
+  it("asks for a move again on each run while it waits for review", async () => {
+    const cowl = reviewing();
+    cowl.sections.set("reference", "Reference");
+    cowl.seedArticle({ title: "Setup", section: "Guides", status: "STABLE", markdown: "same" });
+    const dir = writeTree({ "setup.md": "---\ntitle: Setup\nsection: Reference\n---\nsame" });
+
+    for (let round = 1; round <= 2; round++) {
+      cowl.log = [];
+      const r = await run(cowl, dir);
+
+      expect([r.updated, r.proposed]).toEqual([0, 1]);
+      expect(cowl.log).toEqual(["place setup reference"]);
+      expect(cowl.updateArticleCalls).toEqual([]);
+    }
+    expect(cowl.proposals.size).toBe(1);
+  });
+
+  it("files the prune of a live article and keeps the article", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", markdown: "hello" });
+    cowl.seedArticle({ title: "Old", markdown: "gone" });
+    const dir = writeTree({ "guides/intro.md": "---\ntitle: Intro\n---\nhello" });
+    const r = await run(cowl, dir, { prune: true });
+
+    expect([r.deleted, r.skipped, r.proposed]).toEqual([0, 1, 1]);
+    expect(r.proposals.map(proposalLine)).toEqual([
+      `"Old": Change old: status. Proposal 1 waits for review: ${REVIEW_URL}1`,
+    ]);
+    expect(cowl.articles.get("old")!.status).toBe("STABLE");
+  });
+
+  it("writes a draft at once", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Draft", status: "DRAFT", markdown: "old" });
+    const dir = writeTree({ "guides/draft.md": "---\ntitle: Draft\n---\nnew" });
+    const r = await run(cowl, dir);
+
+    expect([r.updated, r.proposed]).toEqual([1, 0]);
+    expect(r.proposals).toEqual([]);
+    expect(cowl.articles.get("draft")!.markdown).toBe("new");
+  });
+
+  it("counts an article as updated when the key publishes directly", async () => {
+    const cowl = new FakeCowl();
+    cowl.writes = "direct";
+    cowl.seedArticle({ title: "Intro", status: "STABLE", markdown: "hello" });
+    const dir = writeTree({ "guides/intro.md": "---\ntitle: Intro\n---\nnew" });
+    const r = await syncDocs(cowl, nullLogger, opts(dir, { note: "Commit 1a2b3c4" }));
+
+    expect([r.updated, r.proposed]).toEqual([1, 0]);
+    expect(cowl.articles.get("intro")!.markdown).toBe("new");
+  });
+
+  it("sends the note with each write that can wait for review", async () => {
+    const cowl = reviewing();
+    cowl.sections.set("reference", "Reference");
+    cowl.seedArticle({ title: "Setup", section: "Guides", status: "STABLE", markdown: "old" });
+    cowl.seedArticle({ title: "Old", markdown: "gone" });
+    const dir = writeTree({
+      "setup.md": "---\ntitle: Setup\nsection: Reference\n---\nnew",
+      "tutorials/intro.md": "---\ntitle: Intro\nstatus: STABLE\n---\nhello",
+    });
+    const note = "Fix the setup. Commit 1a2b3c4 in acme/docs: https://github.com/acme/docs";
+    const r = await run(cowl, dir, { prune: true, note });
+
+    expect([r.proposed, r.failed]).toEqual([3, 0]);
+    // The create of the article and of its section take no note.
+    expect(cowl.log).toEqual([
+      "create Intro",
+      "section Tutorials",
+      "place intro tutorials",
+      "update intro status=STABLE",
+      "update setup markdown",
+      "place setup reference",
+      "update old status=DEPRECATED",
+    ]);
+    expect(cowl.notes).toEqual([note, note, note, note, note]);
+  });
+
+  it("withdraws a change that the repository reverts before an editor approves it", async () => {
+    const cowl = reviewing();
+    // The live text ends with a line break, and the file text does not.
+    cowl.seedArticle({ title: "Intro", status: "STABLE", markdown: "hello\n" });
+    const first = await run(cowl, writeTree({ "intro.md": "new" }));
+    expect(first.proposed).toBe(1);
+
+    cowl.updateArticleCalls = [];
+    const r = await run(cowl, writeTree({ "intro.md": "hello" }));
+
+    expect([r.updated, r.skipped, r.proposed, r.failed]).toEqual([0, 1, 0, 0]);
+    // The live text goes with allow_shrink, and the live status resets a status change.
+    expect(cowl.updateArticleCalls).toEqual([
+      { slug: "intro", title: "Intro", markdown: "hello\n", allowShrink: true, status: "STABLE" },
+    ]);
+    expect(cowl.proposals.size).toBe(0);
+    expect(cowl.withdrawn.map((p) => p.id)).toEqual([1]);
+    expect(cowl.articles.get("intro")!.markdown).toBe("hello\n");
+  });
+
+  it("withdraws a large text change that the repository reverts", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Big", status: "STABLE", markdown: "x".repeat(100) });
+    await run(cowl, writeTree({ "big.md": "y".repeat(5000) }));
+
+    // Against the working copy, the live text removes 4900 of 5000 characters.
+    const r = await run(cowl, writeTree({ "big.md": "x".repeat(100) }));
+
+    expect([r.skipped, r.proposed, r.failed]).toEqual([1, 0, 0]);
+    expect(r.warnings).toEqual([]);
+    expect(cowl.proposals.size).toBe(0);
+  });
+
+  it("withdraws a status change that the repository reverts or drops", async () => {
+    for (const file of ["---\nstatus: STABLE\n---\nhello", "hello"]) {
+      const cowl = reviewing();
+      cowl.seedArticle({ title: "Intro", status: "STABLE", markdown: "hello" });
+      await run(cowl, writeTree({ "intro.md": "---\nstatus: DEPRECATED\n---\nhello" }));
+      expect([...cowl.proposals.values()].map((p) => p.change)).toEqual([{ status: "DEPRECATED" }]);
+
+      const r = await run(cowl, writeTree({ "intro.md": file }));
+
+      expect([r.skipped, r.proposed, r.failed]).toEqual([1, 0, 0]);
+      expect(cowl.proposals.size).toBe(0);
+      expect(cowl.articles.get("intro")!.status).toBe("STABLE");
+    }
+  });
+
+  it("withdraws the prune of an article whose file comes back", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", markdown: "hello" });
+    cowl.seedArticle({ title: "Old", markdown: "gone" });
+    await run(cowl, writeTree({ "intro.md": "hello" }), { prune: true });
+    expect([...cowl.proposals.values()].map((p) => p.change)).toEqual([{ status: "DEPRECATED" }]);
+
+    const r = await run(cowl, writeTree({ "intro.md": "hello", "old.md": "gone" }), {
+      prune: true,
+    });
+
+    expect([r.skipped, r.proposed, r.deleted, r.failed]).toEqual([2, 0, 0, 0]);
+    expect(cowl.proposals.size).toBe(0);
+    expect(cowl.articles.get("old")!.status).toBe("STABLE");
+  });
+
+  it("withdraws a publish request when the repository drops the status line", async () => {
+    const cowl = reviewing();
+    await run(cowl, writeTree({ "guides/intro.md": "---\nstatus: STABLE\n---\nhello" }));
+    expect(cowl.proposals.size).toBe(1);
+
+    const r = await run(cowl, writeTree({ "guides/intro.md": "hello" }));
+
+    expect([r.skipped, r.proposed, r.failed]).toEqual([1, 0, 0]);
+    expect(cowl.proposals.size).toBe(0);
+    expect(cowl.articles.get("intro")).toMatchObject({ status: "DRAFT", markdown: "hello" });
+  });
+
+  it("withdraws a move that the repository reverts", async () => {
+    const cowl = reviewing();
+    cowl.sections.set("reference", "Reference");
+    cowl.seedArticle({ title: "Setup", section: "Guides", status: "STABLE", markdown: "same" });
+    await run(cowl, writeTree({ "setup.md": "---\nsection: Reference\n---\nsame" }));
+    expect(cowl.proposals.size).toBe(1);
+
+    cowl.log = [];
+    const r = await run(cowl, writeTree({ "setup.md": "---\nsection: Guides\n---\nsame" }));
+
+    expect([r.skipped, r.proposed, r.failed]).toEqual([1, 0, 0]);
+    expect(cowl.log).toEqual(["place setup guides"]);
+    expect(cowl.proposals.size).toBe(0);
+    expect(cowl.withdrawn.map((p) => p.objectType)).toEqual(["placement"]);
+    expect(cowl.articles.get("setup")!.nav).toBe("guides");
+  });
+
+  it("warns and keeps the item when the server refuses to withdraw a move", async () => {
+    const cowl = reviewing();
+    cowl.sections.set("reference", "Reference");
+    cowl.seedArticle({ title: "Setup", section: "Guides", status: "STABLE", markdown: "same" });
+    await run(cowl, writeTree({ "setup.md": "---\nsection: Reference\n---\nsame" }));
+    cowl.failNext("placeArticle", privateSection("place article"));
+
+    const r = await run(cowl, writeTree({ "setup.md": "---\nsection: Guides\n---\nsame" }));
+
+    expect([r.skipped, r.proposed, r.failed]).toEqual([1, 0, 0]);
+    expect(r.warnings).toEqual([
+      'the server refused to withdraw the pending move of "Setup". If the repository dropped the move, reject it in Admin > Proposals. Server error: 402 upgrade_required: internal and private content needs a paid plan or an active trial',
+    ]);
+    expect(cowl.proposals.size).toBe(1);
+  });
+
+  it("keeps only the change that the repository still has", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", status: "STABLE", markdown: "hello" });
+    await run(cowl, writeTree({ "intro.md": "new" }));
+
+    const r = await run(cowl, writeTree({ "intro.md": "---\nstatus: BETA\n---\nhello" }));
+
+    expect([r.updated, r.proposed, r.failed]).toEqual([0, 1, 0]);
+    expect([...cowl.proposals.values()].map((p) => p.change)).toEqual([{ status: "BETA" }]);
+    expect(r.proposals.map(proposalLine)).toEqual([
+      `"Intro": Change intro: status. Proposal 2 waits for review: ${REVIEW_URL}2`,
+    ]);
+  });
+
+  it("updates the pending proposal when the repository changes the text again", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", status: "STABLE", markdown: "hello" });
+    await run(cowl, writeTree({ "intro.md": "---\nstatus: BETA\n---\nnew" }));
+
+    const r = await run(cowl, writeTree({ "intro.md": "---\nstatus: BETA\n---\nnewer" }));
+
+    expect([r.updated, r.proposed]).toEqual([0, 1]);
+    expect(r.proposals.map((p) => p.review.id)).toEqual([1]);
+    expect([...cowl.proposals.values()].map((p) => p.change)).toEqual([
+      { markdown: "newer", status: "BETA" },
+    ]);
+  });
+
+  it("names the pending proposal when the server counts a large removal against it", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Big", status: "STABLE", markdown: "x".repeat(100) });
+    await run(cowl, writeTree({ "big.md": "y".repeat(5000) }));
+
+    const dir = writeTree({ "big.md": "z".repeat(120) });
+    const r = await run(cowl, dir);
+
+    const removal =
+      "the new body removes 4880 of the 5000 characters of pending proposal 1 of this key, not of the live page";
+    expect([r.proposed, r.failed]).toEqual([0, 1]);
+    expect(r.failures).toEqual([
+      `update "Big" failed: 422 large_removal: ${removal}. To accept it, reject proposal 1 in Admin > Proposals or set the allow-shrink input to true`,
+    ]);
+    expect(cowl.proposals.get("article:big")!.change).toEqual({ markdown: "y".repeat(5000) });
+
+    const shrink = await run(cowl, dir, { allowShrink: true });
+
+    expect([shrink.proposed, shrink.failed]).toEqual([1, 0]);
+    expect(shrink.warnings).toEqual([`"Big": ${removal}. The action sends it with allow_shrink.`]);
+    expect(cowl.proposals.get("article:big")!.change).toEqual({ markdown: "z".repeat(120) });
+  });
+
+  it("leaves the pending proposal of another key alone", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", status: "STABLE", markdown: "hello" });
+    cowl.otherKeyProposals.push({
+      id: 9,
+      objectType: "article",
+      target: "article:intro",
+      slug: "intro",
+      title: "Intro",
+      summary: "Change intro: markdown",
+      change: { markdown: "theirs" },
+      base: "",
+    });
+    const r = await run(cowl, writeTree({ "intro.md": "hello" }));
+
+    // The write of this key changes nothing, because this key has no working copy.
+    expect([r.skipped, r.proposed, r.failed]).toEqual([1, 0, 0]);
+    expect(cowl.updateArticleCalls).toHaveLength(1);
+    expect(cowl.withdrawn).toEqual([]);
+    expect(cowl.otherKeyProposals.map((p) => p.id)).toEqual([9]);
+  });
+
+  it("sends no status without article.publish", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", status: "STABLE", markdown: "hello" });
+    await run(cowl, writeTree({ "intro.md": "new" }));
+    cowl.perms.articlePublish = false;
+    cowl.updateArticleCalls = [];
+
+    const r = await run(cowl, writeTree({ "intro.md": "hello" }));
+
+    expect([r.skipped, r.failed]).toEqual([1, 0]);
+    expect(cowl.updateArticleCalls).toEqual([
+      { slug: "intro", title: "Intro", markdown: "hello", allowShrink: true },
+    ]);
+    expect(cowl.proposals.size).toBe(0);
+  });
+
+  it("sends the live text with the prune of an article whose text change waits", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", markdown: "hello" });
+    cowl.seedArticle({ title: "Old", markdown: "gone" });
+    await run(cowl, writeTree({ "intro.md": "hello", "old.md": "changed" }), { prune: true });
+    expect([...cowl.proposals.values()].map((p) => p.change)).toEqual([{ markdown: "changed" }]);
+
+    cowl.updateArticleCalls = [];
+    const r = await run(cowl, writeTree({ "intro.md": "hello" }), { prune: true });
+
+    expect([r.deleted, r.proposed, r.failed]).toEqual([0, 1, 0]);
+    expect(cowl.updateArticleCalls).toEqual([
+      { slug: "old", status: "DEPRECATED", title: "Old", markdown: "gone", allowShrink: true },
+    ]);
+    expect([...cowl.proposals.values()].map((p) => p.change)).toEqual([{ status: "DEPRECATED" }]);
+  });
+
+  it("plans no write for a pending proposal in a dry run", async () => {
+    const cowl = reviewing();
+    cowl.seedArticle({ title: "Intro", status: "STABLE", markdown: "hello" });
+    await run(cowl, writeTree({ "intro.md": "new" }));
+    cowl.log = [];
+
+    const r = await run(cowl, writeTree({ "intro.md": "hello" }), { dryRun: true });
+
+    expect([r.updated, r.skipped]).toEqual([0, 1]);
+    expect(r.lines).toEqual([]);
+    expect(cowl.log).toEqual([]);
+    expect(cowl.proposals.size).toBe(1);
   });
 });
